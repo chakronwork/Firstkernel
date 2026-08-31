@@ -1,19 +1,42 @@
 CC      := gcc
 AS      := gcc
+
 CFLAGS  := -std=gnu11 -m32 -ffreestanding -O2 -Wall -Wextra -Iinclude \
            -fno-stack-protector -fno-pie -mno-red-zone
+
 LDFLAGS := -m32 -ffreestanding -O2 -nostdlib -no-pie \
            -Wl,--build-id=none -Wl,-z,noexecstack -T linker.ld
 
-
-OBJS := boot/boot.o kernel/kmain.o kernel/vga.o
+OBJS := \
+    boot/boot.o \
+    kernel/gdt.o \
+    kernel/gdt_asm.o \
+    kernel/idt.o \
+    kernel/idt_asm.o \
+    kernel/kmain.o \
+    kernel/vga.o
 
 all: firstos.bin
 
-%.o: %.s
+boot/boot.o: boot/boot.s
 	$(AS) $(CFLAGS) -c $< -o $@
 
-%.o: %.c
+kernel/gdt.o: kernel/gdt.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/gdt_asm.o: kernel/gdt.s
+	$(AS) $(CFLAGS) -c $< -o $@
+
+kernel/idt.o: kernel/idt.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/idt_asm.o: kernel/idt.s
+	$(AS) $(CFLAGS) -c $< -o $@
+
+kernel/kmain.o: kernel/kmain.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/vga.o: kernel/vga.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 firstos.bin: $(OBJS) linker.ld
