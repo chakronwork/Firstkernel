@@ -1,15 +1,17 @@
-CC      := i686-elf-gcc
-AS      := i686-elf-as
-CFLAGS  := -std=gnu11 -ffreestanding -O2 -Wall -Wextra -Iinclude \
-           -fno-stack-protector -fno-pic -mno-red-zone
-LDFLAGS := -ffreestanding -O2 -nostdlib -T linker.ld
+CC      := gcc
+AS      := gcc
+CFLAGS  := -std=gnu11 -m32 -ffreestanding -O2 -Wall -Wextra -Iinclude \
+           -fno-stack-protector -fno-pie -mno-red-zone
+LDFLAGS := -m32 -ffreestanding -O2 -nostdlib -no-pie \
+           -Wl,--build-id=none -Wl,-z,noexecstack -T linker.ld
+
 
 OBJS := boot/boot.o kernel/kmain.o kernel/vga.o
 
 all: firstos.bin
 
 %.o: %.s
-	$(AS) $< -o $@
+	$(AS) $(CFLAGS) -c $< -o $@
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
