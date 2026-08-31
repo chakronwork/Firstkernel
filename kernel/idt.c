@@ -1,6 +1,10 @@
 #include <stdint.h>
+
 #include "idt.h"
-#include "vga.h"
+#include "pic.h"
+#include "timer.h"
+#include "keyboard.h"
+#include "console.h"
 
 struct idt_entry {
     uint16_t base_low;
@@ -15,21 +19,13 @@ struct idt_ptr {
     uint32_t base;
 } __attribute__((packed));
 
-struct registers {
-    uint32_t edi;
-    uint32_t esi;
-    uint32_t ebp;
-    uint32_t esp;
-    uint32_t ebx;
-    uint32_t edx;
-    uint32_t ecx;
-    uint32_t eax;
-    uint32_t int_no;
-    uint32_t err_code;
-} __attribute__((packed));
-
 static struct idt_entry idt[256];
 static struct idt_ptr idtp;
+
+
+/*
+ * IDT / ISR assembly functions
+ */
 
 extern void idt_flush(uint32_t);
 
@@ -66,62 +62,183 @@ extern void isr29(void);
 extern void isr30(void);
 extern void isr31(void);
 
+extern void isr32(void);
+extern void isr33(void);
+
+
+/*
+ * Install one IDT gate.
+ */
 static void idt_set_gate(
     uint8_t num,
     uint32_t base,
     uint16_t selector,
     uint8_t flags
-) {
-    idt[num].base_low = base & 0xFFFF;
-    idt[num].base_high = (base >> 16) & 0xFFFF;
+)
+{
+    idt[num].base_low =
+        (uint16_t)(base & 0xFFFF);
+
+    idt[num].base_high =
+        (uint16_t)((base >> 16) & 0xFFFF);
 
     idt[num].selector = selector;
     idt[num].zero = 0;
     idt[num].flags = flags;
 }
 
-static void print_hex32(uint32_t value) {
-    static const char hex[] = "0123456789ABCDEF";
 
-    char buffer[9];
+/*
+ * Handle hardware IRQs.
+ *
+ * PIC remapping:
+ *
+ *   IRQ0  -> vector 32
+ *   IRQ1  -> vector 33
+ *   IRQ2  -> vector 34
+ *   ...
+ *   IRQ15 -> vector 47
+ */
+static void irq_handler(struct registers *regs)
+{
+    uint32_t irq;
 
-    for (int i = 7; i >= 0; --i) {
-        buffer[i] = hex[value & 0xF];
-        value >>= 4;
+    irq = regs->int_no - 32;
+
+    switch (irq) {
+
+        /*
+         * IRQ0
+         *
+         * PIT timer
+         */
+        case 0:
+            timer_handler();
+            break;
+
+        /*
+         * IRQ1
+         *
+         * PS/2 keyboard
+         */
+        case 1:
+            keyboard_handler();
+            break;
+
+        /*
+         * IRQ2-15
+         *
+         * Not implemented yet.
+         */
+        default:
+            pic_send_eoi((uint8_t)irq);
+            break;
     }
-
-    buffer[8] = '\0';
-    vga_write(buffer);
 }
 
-void isr_handler(struct registers *regs) {
-    vga_setcolor(VGA_LRED, VGA_BLACK);
-    vga_write("\n\nEXCEPTION\n");
 
-    vga_setcolor(VGA_YELLOW, VGA_BLACK);
-    vga_write("INTERRUPT: ");
+/*
+ * Main interrupt dispatcher.
+ *
+ * CPU exceptions:
+ *   0-31
+ *
+ * Hardware IRQ:
+ *   32-47
+ */
+void isr_handler(struct registers *regs)
+{
+    /*
+     * Hardware interrupt.
+     */
+    if (regs->int_no >= 32 &&
+        regs->int_no <= 47)
+    {
+        irq_handler(regs);
+        return;
+    }
 
-    print_hex32(regs->int_no);
+    /*
+     * CPU exception.
+     */
+    console_set_color(VGA_LRED, VGA_BLACK);
+    console_write("\n\nEXCEPTION\n");
 
-    vga_write("\nERROR: 0x");
+    console_set_color(VGA_YELLOW, VGA_BLACK);
 
-    print_hex32(regs->err_code);
+    console_write("INTERRUPT: 0x");
 
-    vga_write("\n");
+    /*
+     * Print hexadecimal interrupt number.
+     */
+    {
+        static const char hex[] =
+            "0123456789ABCDEF";
 
-    vga_setcolor(VGA_LGREY, VGA_BLACK);
-    vga_write("CPU halted.\n");
+        char buffer[9];
+        uint32_t value = regs->int_no;
 
+        for (int i = 7; i >= 0; --i) {
+            buffer[i] = hex[value & 0xF];
+            value >>= 4;
+        }
+
+        buffer[8] = '\0';
+
+        console_write(buffer);
+    }
+
+    console_write("\nERROR:     0x");
+
+    /*
+     * Print hexadecimal error code.
+     */
+    {
+        static const char hex[] =
+            "0123456789ABCDEF";
+
+        char buffer[9];
+        uint32_t value = regs->err_code;
+
+        for (int i = 7; i >= 0; --i) {
+            buffer[i] = hex[value & 0xF];
+            value >>= 4;
+        }
+
+        buffer[8] = '\0';
+
+        console_write(buffer);
+    }
+
+    console_write("\n");
+
+    console_set_color(VGA_LGREY, VGA_BLACK);
+    console_write("CPU halted.\n");
+
+    /*
+     * Exception is fatal for now.
+     */
     for (;;) {
         __asm__ volatile ("cli");
         __asm__ volatile ("hlt");
     }
 }
 
-void idt_init(void) {
-    idtp.limit = sizeof(idt) - 1;
-    idtp.base = (uint32_t)&idt;
 
+/*
+ * Initialize the Interrupt Descriptor Table.
+ */
+void idt_init(void)
+{
+    /*
+     * Configure IDTR.
+     */
+    idtp.limit = sizeof(idt) - 1;
+    idtp.base = (uint32_t)&idt[0];
+
+    /*
+     * Clear all 256 IDT entries.
+     */
     for (int i = 0; i < 256; ++i) {
         idt[i].base_low = 0;
         idt[i].base_high = 0;
@@ -130,28 +247,95 @@ void idt_init(void) {
         idt[i].flags = 0;
     }
 
+    /*
+     * CPU exception handlers 0-31.
+     */
     uint32_t isrs[32] = {
-        (uint32_t)isr0,  (uint32_t)isr1,
-        (uint32_t)isr2,  (uint32_t)isr3,
-        (uint32_t)isr4,  (uint32_t)isr5,
-        (uint32_t)isr6,  (uint32_t)isr7,
-        (uint32_t)isr8,  (uint32_t)isr9,
-        (uint32_t)isr10, (uint32_t)isr11,
-        (uint32_t)isr12, (uint32_t)isr13,
-        (uint32_t)isr14, (uint32_t)isr15,
-        (uint32_t)isr16, (uint32_t)isr17,
-        (uint32_t)isr18, (uint32_t)isr19,
-        (uint32_t)isr20, (uint32_t)isr21,
-        (uint32_t)isr22, (uint32_t)isr23,
-        (uint32_t)isr24, (uint32_t)isr25,
-        (uint32_t)isr26, (uint32_t)isr27,
-        (uint32_t)isr28, (uint32_t)isr29,
-        (uint32_t)isr30, (uint32_t)isr31
+        (uint32_t)isr0,
+        (uint32_t)isr1,
+        (uint32_t)isr2,
+        (uint32_t)isr3,
+        (uint32_t)isr4,
+        (uint32_t)isr5,
+        (uint32_t)isr6,
+        (uint32_t)isr7,
+
+        (uint32_t)isr8,
+        (uint32_t)isr9,
+        (uint32_t)isr10,
+        (uint32_t)isr11,
+        (uint32_t)isr12,
+        (uint32_t)isr13,
+        (uint32_t)isr14,
+        (uint32_t)isr15,
+
+        (uint32_t)isr16,
+        (uint32_t)isr17,
+        (uint32_t)isr18,
+        (uint32_t)isr19,
+        (uint32_t)isr20,
+        (uint32_t)isr21,
+        (uint32_t)isr22,
+        (uint32_t)isr23,
+
+        (uint32_t)isr24,
+        (uint32_t)isr25,
+        (uint32_t)isr26,
+        (uint32_t)isr27,
+        (uint32_t)isr28,
+        (uint32_t)isr29,
+        (uint32_t)isr30,
+        (uint32_t)isr31
     };
 
+    /*
+     * Kernel code segment:
+     *
+     *   selector = 0x08
+     *
+     * Interrupt gate:
+     *
+     *   0x8E
+     *
+     *   Present
+     *   DPL 0
+     *   32-bit interrupt gate
+     */
     for (int i = 0; i < 32; ++i) {
-        idt_set_gate(i, isrs[i], 0x08, 0x8E);
+        idt_set_gate(
+            (uint8_t)i,
+            isrs[i],
+            0x08,
+            0x8E
+        );
     }
 
+    /*
+     * IRQ0 -> vector 32
+     *
+     * PIT timer.
+     */
+    idt_set_gate(
+        32,
+        (uint32_t)isr32,
+        0x08,
+        0x8E
+    );
+
+    /*
+     * IRQ1 -> vector 33
+     *
+     * Keyboard.
+     */
+    idt_set_gate(
+        33,
+        (uint32_t)isr33,
+        0x08,
+        0x8E
+    );
+
+    /*
+     * Load IDT register.
+     */
     idt_flush((uint32_t)&idtp);
 }
