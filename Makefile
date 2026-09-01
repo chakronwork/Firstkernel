@@ -1,10 +1,12 @@
-CC      := gcc
-AS      := gcc
+CC := gcc
+AS := gcc
 
-CFLAGS  := -std=gnu11 -m32 -ffreestanding -O2 -Wall -Wextra -Iinclude \
-           -fno-stack-protector \
-           -fno-pie \
-           -mno-red-zone
+
+CFLAGS := -std=gnu11 -m32 -ffreestanding -O2 -Wall -Wextra -Iinclude \
+          -fno-stack-protector \
+          -fno-pie \
+          -mno-red-zone
+
 
 LDFLAGS := -m32 -ffreestanding -O2 -nostdlib -no-pie \
            -Wl,--build-id=none \
@@ -22,6 +24,7 @@ OBJS := \
     kernel/timer.o \
     kernel/keyboard.o \
     kernel/console.o \
+    kernel/serial.o \
     kernel/pmm.o \
     kernel/kmain.o \
     kernel/vga.o
@@ -66,6 +69,10 @@ kernel/console.o: kernel/console.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 
+kernel/serial.o: kernel/serial.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+
 kernel/pmm.o: kernel/pmm.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -83,7 +90,7 @@ firstos.bin: $(OBJS) linker.ld
 
 
 run: firstos.bin
-	qemu-system-i386 -kernel firstos.bin -m 128M
+	qemu-system-i386 -kernel firstos.bin -m 128M -serial stdio
 
 
 iso: firstos.bin

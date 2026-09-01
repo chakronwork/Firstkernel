@@ -7,12 +7,17 @@
 #include "timer.h"
 #include "keyboard.h"
 #include "pmm.h"
+#include "serial.h"
+
 
 #define MULTIBOOT_MAGIC 0x2BADB002
 
 #define COMMAND_BUFFER_SIZE 128
 
 
+/*
+ * Halt CPU permanently.
+ */
 static void halt_cpu(void)
 {
     for (;;) {
@@ -25,13 +30,16 @@ static void halt_cpu(void)
 /*
  * Print unsigned 32-bit integer.
  */
-static void print_uint32(uint32_t value)
+static void print_uint32(
+    uint32_t value
+)
 {
     char buffer[11];
     uint32_t i = 0;
 
 
     if (value == 0) {
+
         console_putc('0');
         return;
     }
@@ -47,7 +55,10 @@ static void print_uint32(uint32_t value)
 
 
     while (i > 0) {
-        console_putc(buffer[--i]);
+
+        console_putc(
+            buffer[--i]
+        );
     }
 }
 
@@ -57,11 +68,30 @@ void kmain(
     uint32_t mbi_addr
 )
 {
-    char command[COMMAND_BUFFER_SIZE];
+    char command[
+        COMMAND_BUFFER_SIZE
+    ];
 
 
     /*
-     * Console
+     * ==================================================
+     * Serial debug console
+     * ==================================================
+     */
+    serial_init();
+
+    serial_write(
+        "\n"
+        "========================================\n"
+        " firstOS serial console\n"
+        "========================================\n"
+    );
+
+
+    /*
+     * ==================================================
+     * VGA console
+     * ==================================================
      */
     console_init();
 
@@ -71,8 +101,9 @@ void kmain(
     );
 
     console_write(
-        "firstOS v0.0.9\n"
+        "firstOS v0.0.10\n"
     );
+
 
     console_set_color(
         VGA_LGREY,
@@ -85,7 +116,9 @@ void kmain(
 
 
     /*
-     * Multiboot verification.
+     * ==================================================
+     * Multiboot verification
+     * ==================================================
      */
     if (magic != MULTIBOOT_MAGIC) {
 
@@ -96,6 +129,10 @@ void kmain(
 
         console_write(
             "FATAL: bad multiboot magic\n"
+        );
+
+        serial_write(
+            "[fatal] bad multiboot magic\n"
         );
 
         halt_cpu();
@@ -116,8 +153,19 @@ void kmain(
     );
 
 
+    serial_write(
+        "[ ok ] multiboot verified\n"
+    );
+
+    serial_write(
+        "[ ok ] kernel console ready\n"
+    );
+
+
     /*
+     * ==================================================
      * GDT
+     * ==================================================
      */
     gdt_init();
 
@@ -134,8 +182,19 @@ void kmain(
     );
 
 
+    serial_write(
+        "[ ok ] gdt loaded\n"
+    );
+
+    serial_write(
+        "[ ok ] kernel segments ready\n"
+    );
+
+
     /*
+     * ==================================================
      * IDT
+     * ==================================================
      */
     idt_init();
 
@@ -148,8 +207,19 @@ void kmain(
     );
 
 
+    serial_write(
+        "[ ok ] idt loaded\n"
+    );
+
+    serial_write(
+        "[ ok ] exception handlers installed\n"
+    );
+
+
     /*
+     * ==================================================
      * PIC
+     * ==================================================
      */
     pic_remap(
         32,
@@ -160,9 +230,15 @@ void kmain(
         "[ ok ] pic remapped: 32/40\n"
     );
 
+    serial_write(
+        "[ ok ] pic remapped: 32/40\n"
+    );
+
 
     /*
+     * ==================================================
      * PIT
+     * ==================================================
      */
     timer_init(100);
 
@@ -170,9 +246,15 @@ void kmain(
         "[ ok ] pit timer configured: 100 hz\n"
     );
 
+    serial_write(
+        "[ ok ] pit timer configured: 100 hz\n"
+    );
+
 
     /*
+     * ==================================================
      * Keyboard
+     * ==================================================
      */
     keyboard_init();
 
@@ -180,23 +262,37 @@ void kmain(
         "[ ok ] keyboard irq1 ready\n"
     );
 
+    serial_write(
+        "[ ok ] keyboard irq1 ready\n"
+    );
+
 
     /*
+     * ==================================================
      * Physical Memory Manager
      *
      * IMPORTANT:
      *
      * PMM is initialized BEFORE STI.
+     * ==================================================
      */
-    pmm_init(mbi_addr);
+    pmm_init(
+        mbi_addr
+    );
 
     console_write(
         "[ ok ] physical memory manager initialized\n"
     );
 
+    serial_write(
+        "[ ok ] physical memory manager initialized\n"
+    );
+
 
     /*
-     * Display PMM statistics.
+     * ==================================================
+     * Display PMM statistics
+     * ==================================================
      */
     console_write(
         "[info] total pages: "
@@ -224,8 +320,36 @@ void kmain(
     );
 
 
+    serial_write(
+        "[info] total pages: "
+    );
+
+    serial_write_dec(
+        pmm_get_total_pages()
+    );
+
+    serial_write(
+        "\n"
+    );
+
+
+    serial_write(
+        "[info] free pages:  "
+    );
+
+    serial_write_dec(
+        pmm_get_free_pages()
+    );
+
+    serial_write(
+        "\n"
+    );
+
+
     /*
-     * PMM allocation test.
+     * ==================================================
+     * PMM allocation test
+     * ==================================================
      */
     console_set_color(
         VGA_YELLOW,
@@ -233,6 +357,10 @@ void kmain(
     );
 
     console_write(
+        "[test] allocating physical pages\n"
+    );
+
+    serial_write(
         "[test] allocating physical pages\n"
     );
 
@@ -259,6 +387,10 @@ void kmain(
             "[fail] physical page allocation\n"
         );
 
+        serial_write(
+            "[fail] physical page allocation\n"
+        );
+
         halt_cpu();
     }
 
@@ -277,19 +409,42 @@ void kmain(
     );
 
 
+    serial_write(
+        "[ ok ] page A allocated\n"
+    );
+
+    serial_write(
+        "[ ok ] page B allocated\n"
+    );
+
+
     /*
-     * Free pages.
+     * ==================================================
+     * Free pages
+     * ==================================================
      */
-    pmm_free_page(page_a);
-    pmm_free_page(page_b);
+    pmm_free_page(
+        page_a
+    );
+
+    pmm_free_page(
+        page_b
+    );
+
 
     console_write(
         "[ ok ] pages freed\n"
     );
 
+    serial_write(
+        "[ ok ] pages freed\n"
+    );
+
 
     /*
-     * Enable hardware interrupts.
+     * ==================================================
+     * Enable hardware interrupts
+     * ==================================================
      */
     console_set_color(
         VGA_YELLOW,
@@ -300,11 +455,18 @@ void kmain(
         "[ ok ] enabling interrupts\n"
     );
 
+    serial_write(
+        "[ ok ] enabling interrupts\n"
+    );
+
+
     __asm__ volatile ("sti");
 
 
     /*
-     * Start command line.
+     * ==================================================
+     * Command line
+     * ==================================================
      */
     console_set_color(
         VGA_LGREY,
@@ -315,9 +477,15 @@ void kmain(
         "\nfirstos> "
     );
 
+    serial_write(
+        "\nfirstos> "
+    );
+
 
     /*
-     * Basic command input loop.
+     * ==================================================
+     * Basic command input loop
+     * ==================================================
      */
     for (;;) {
 
@@ -337,10 +505,23 @@ void kmain(
             console_write(
                 command
             );
+
+
+            serial_write(
+                "\nreceived: "
+            );
+
+            serial_write(
+                command
+            );
         }
 
 
         console_write(
+            "\nfirstos> "
+        );
+
+        serial_write(
             "\nfirstos> "
         );
     }

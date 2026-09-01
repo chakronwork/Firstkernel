@@ -5,6 +5,8 @@
 #include "timer.h"
 #include "keyboard.h"
 #include "console.h"
+#include "serial.h"
+
 
 struct idt_entry {
     uint16_t base_low;
@@ -14,10 +16,12 @@ struct idt_entry {
     uint16_t base_high;
 } __attribute__((packed));
 
+
 struct idt_ptr {
     uint16_t limit;
     uint32_t base;
 } __attribute__((packed));
+
 
 static struct idt_entry idt[256];
 static struct idt_ptr idtp;
@@ -67,6 +71,68 @@ extern void isr33(void);
 
 
 /*
+ * Read CR2.
+ *
+ * CR2 contains the virtual address that
+ * caused a page fault.
+ */
+static uint32_t read_cr2(void)
+{
+    uint32_t value;
+
+    __asm__ volatile (
+        "mov %%cr2, %0"
+        : "=r"(value)
+    );
+
+    return value;
+}
+
+
+/*
+ * Print a 32-bit hexadecimal value
+ * to VGA console.
+ *
+ * Example:
+ *
+ *   0x0010ABCD
+ */
+static void console_write_hex32(uint32_t value)
+{
+    static const char hex[] =
+        "0123456789ABCDEF";
+
+    char buffer[9];
+
+    for (int i = 7; i >= 0; --i) {
+        buffer[i] =
+            hex[value & 0xF];
+
+        value >>= 4;
+    }
+
+    buffer[8] = '\0';
+
+    console_write(buffer);
+}
+
+
+/*
+ * Print a 32-bit hexadecimal value
+ * to serial console.
+ */
+static void serial_write_hex32_line(
+    const char *name,
+    uint32_t value
+)
+{
+    serial_write(name);
+    serial_write_hex32(value);
+    serial_write("\n");
+}
+
+
+/*
  * Install one IDT gate.
  */
 static void idt_set_gate(
@@ -99,11 +165,14 @@ static void idt_set_gate(
  *   ...
  *   IRQ15 -> vector 47
  */
-static void irq_handler(struct registers *regs)
+static void irq_handler(
+    struct registers *regs
+)
 {
     uint32_t irq;
 
-    irq = regs->int_no - 32;
+    irq =
+        regs->int_no - 32;
 
     switch (irq) {
 
@@ -131,7 +200,9 @@ static void irq_handler(struct registers *regs)
          * Not implemented yet.
          */
         default:
-            pic_send_eoi((uint8_t)irq);
+            pic_send_eoi(
+                (uint8_t)irq
+            );
             break;
     }
 }
@@ -141,12 +212,16 @@ static void irq_handler(struct registers *regs)
  * Main interrupt dispatcher.
  *
  * CPU exceptions:
+ *
  *   0-31
  *
  * Hardware IRQ:
+ *
  *   32-47
  */
-void isr_handler(struct registers *regs)
+void isr_handler(
+    struct registers *regs
+)
 {
     /*
      * Hardware interrupt.
@@ -158,62 +233,161 @@ void isr_handler(struct registers *regs)
         return;
     }
 
+
     /*
      * CPU exception.
      */
-    console_set_color(VGA_LRED, VGA_BLACK);
-    console_write("\n\nEXCEPTION\n");
-
-    console_set_color(VGA_YELLOW, VGA_BLACK);
-
-    console_write("INTERRUPT: 0x");
 
     /*
-     * Print hexadecimal interrupt number.
+     * VGA diagnostic output.
      */
-    {
-        static const char hex[] =
-            "0123456789ABCDEF";
+    console_set_color(
+        VGA_LRED,
+        VGA_BLACK
+    );
 
-        char buffer[9];
-        uint32_t value = regs->int_no;
+    console_write(
+        "\n\n========== CPU EXCEPTION ==========\n"
+    );
 
-        for (int i = 7; i >= 0; --i) {
-            buffer[i] = hex[value & 0xF];
-            value >>= 4;
-        }
 
-        buffer[8] = '\0';
+    console_set_color(
+        VGA_YELLOW,
+        VGA_BLACK
+    );
 
-        console_write(buffer);
-    }
+    console_write(
+        "INTERRUPT: 0x"
+    );
 
-    console_write("\nERROR:     0x");
+    console_write_hex32(
+        regs->int_no
+    );
+
+    console_write(
+        "\nERROR:     0x"
+    );
+
+    console_write_hex32(
+        regs->err_code
+    );
+
+    console_write(
+        "\nEIP:       0x"
+    );
+
+    console_write_hex32(
+        regs->eip
+    );
+
+    console_write(
+        "\nCS:        0x"
+    );
+
+    console_write_hex32(
+        regs->cs
+    );
+
+    console_write(
+        "\nEFLAGS:    0x"
+    );
+
+    console_write_hex32(
+        regs->eflags
+    );
+
 
     /*
-     * Print hexadecimal error code.
+     * Page Fault.
+     *
+     * Exception vector 14.
      */
-    {
-        static const char hex[] =
-            "0123456789ABCDEF";
+    if (regs->int_no == 14) {
 
-        char buffer[9];
-        uint32_t value = regs->err_code;
+        uint32_t cr2 =
+            read_cr2();
 
-        for (int i = 7; i >= 0; --i) {
-            buffer[i] = hex[value & 0xF];
-            value >>= 4;
-        }
+        console_write(
+            "\nCR2:       0x"
+        );
 
-        buffer[8] = '\0';
-
-        console_write(buffer);
+        console_write_hex32(
+            cr2
+        );
     }
 
-    console_write("\n");
+    console_write(
+        "\n"
+    );
 
-    console_set_color(VGA_LGREY, VGA_BLACK);
-    console_write("CPU halted.\n");
+
+    /*
+     * Serial diagnostic output.
+     *
+     * This is the important part for QEMU
+     * debugging when VGA output becomes unreliable.
+     */
+    serial_write(
+        "\n\n========== CPU EXCEPTION ==========\n"
+    );
+
+    serial_write_hex32_line(
+        "INTERRUPT: ",
+        regs->int_no
+    );
+
+    serial_write_hex32_line(
+        "ERROR:     ",
+        regs->err_code
+    );
+
+    serial_write_hex32_line(
+        "EIP:       ",
+        regs->eip
+    );
+
+    serial_write_hex32_line(
+        "CS:        ",
+        regs->cs
+    );
+
+    serial_write_hex32_line(
+        "EFLAGS:    ",
+        regs->eflags
+    );
+
+
+    /*
+     * Page Fault diagnostics.
+     */
+    if (regs->int_no == 14) {
+
+        uint32_t cr2 =
+            read_cr2();
+
+        serial_write_hex32_line(
+            "CR2:       ",
+            cr2
+        );
+    }
+
+    serial_write(
+        "===================================\n"
+    );
+
+
+    /*
+     * Halt CPU.
+     */
+    console_set_color(
+        VGA_LGREY,
+        VGA_BLACK
+    );
+
+    console_write(
+        "CPU halted.\n"
+    );
+
 
     /*
      * Exception is fatal for now.
@@ -233,13 +407,18 @@ void idt_init(void)
     /*
      * Configure IDTR.
      */
-    idtp.limit = sizeof(idt) - 1;
-    idtp.base = (uint32_t)&idt[0];
+    idtp.limit =
+        sizeof(idt) - 1;
+
+    idtp.base =
+        (uint32_t)&idt[0];
+
 
     /*
      * Clear all 256 IDT entries.
      */
     for (int i = 0; i < 256; ++i) {
+
         idt[i].base_low = 0;
         idt[i].base_high = 0;
         idt[i].selector = 0;
@@ -247,10 +426,12 @@ void idt_init(void)
         idt[i].flags = 0;
     }
 
+
     /*
      * CPU exception handlers 0-31.
      */
     uint32_t isrs[32] = {
+
         (uint32_t)isr0,
         (uint32_t)isr1,
         (uint32_t)isr2,
@@ -288,6 +469,7 @@ void idt_init(void)
         (uint32_t)isr31
     };
 
+
     /*
      * Kernel code segment:
      *
@@ -302,6 +484,7 @@ void idt_init(void)
      *   32-bit interrupt gate
      */
     for (int i = 0; i < 32; ++i) {
+
         idt_set_gate(
             (uint8_t)i,
             isrs[i],
@@ -309,6 +492,7 @@ void idt_init(void)
             0x8E
         );
     }
+
 
     /*
      * IRQ0 -> vector 32
@@ -322,6 +506,7 @@ void idt_init(void)
         0x8E
     );
 
+
     /*
      * IRQ1 -> vector 33
      *
@@ -334,8 +519,11 @@ void idt_init(void)
         0x8E
     );
 
+
     /*
      * Load IDT register.
      */
-    idt_flush((uint32_t)&idtp);
+    idt_flush(
+        (uint32_t)&idtp
+    );
 }

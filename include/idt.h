@@ -15,6 +15,10 @@ struct registers {
 
     uint32_t int_no;
     uint32_t err_code;
+
+    uint32_t eip;
+    uint32_t cs;
+    uint32_t eflags;
 };
 
 void idt_init(void);
