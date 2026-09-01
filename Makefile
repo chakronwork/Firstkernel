@@ -28,6 +28,7 @@ OBJS := \
     kernel/pmm.o \
     kernel/kmalloc.o \
     kernel/paging.o \
+    kernel/page_fault.o \
     kernel/kmain.o \
     kernel/vga.o
 
@@ -84,6 +85,10 @@ kernel/kmalloc.o: kernel/kmalloc.c
 
 
 kernel/paging.o: kernel/paging.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+
+kernel/page_fault.o: kernel/page_fault.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 

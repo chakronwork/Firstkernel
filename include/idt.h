@@ -3,6 +3,26 @@
 
 #include <stdint.h>
 
+
+/*
+ * Registers pushed by isr_common.
+ *
+ * Stack layout:
+ *
+ *   edi
+ *   esi
+ *   ebp
+ *   esp
+ *   ebx
+ *   edx
+ *   ecx
+ *   eax
+ *   int_no
+ *   err_code
+ *   eip
+ *   cs
+ *   eflags
+ */
 struct registers {
     uint32_t edi;
     uint32_t esi;
@@ -21,7 +41,11 @@ struct registers {
     uint32_t eflags;
 };
 
+
 void idt_init(void);
-void isr_handler(struct registers *regs);
+
+void isr_handler(
+    struct registers *regs
+);
 
 #endif

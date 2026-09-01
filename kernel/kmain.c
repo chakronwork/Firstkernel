@@ -21,6 +21,17 @@
 
 
 /*
+ * Page-fault test address.
+ *
+ * FirstOS currently identity-maps only the
+ * physical memory known to PMM (~128 MiB).
+ *
+ * 0xF0000000 is therefore intentionally unmapped.
+ */
+#define PAGE_FAULT_TEST_ADDRESS 0xF0000000U
+
+
+/*
  * ============================================================
  * CPU halt
  * ============================================================
@@ -28,6 +39,7 @@
 static void halt_cpu(void)
 {
     for (;;) {
+
         __asm__ volatile ("cli");
         __asm__ volatile ("hlt");
     }
@@ -36,7 +48,7 @@ static void halt_cpu(void)
 
 /*
  * ============================================================
- * Decimal output
+ * Print unsigned decimal
  * ============================================================
  */
 static void print_uint32(
@@ -48,7 +60,9 @@ static void print_uint32(
 
 
     if (value == 0) {
+
         console_putc('0');
+
         return;
     }
 
@@ -56,7 +70,10 @@ static void print_uint32(
     while (value > 0) {
 
         buffer[i++] =
-            (char)('0' + (value % 10));
+            (char)(
+                '0' +
+                (value % 10)
+            );
 
         value /= 10;
     }
@@ -68,6 +85,29 @@ static void print_uint32(
             buffer[--i]
         );
     }
+}
+
+
+/*
+ * ============================================================
+ * Compare command with "pf"
+ * ============================================================
+ *
+ * keyboard_readline() keeps the terminating '\n'.
+ */
+static int command_is_pf(
+    const char *command
+)
+{
+    if (command == 0)
+        return 0;
+
+
+    return
+        command[0] == 'p' &&
+        command[1] == 'f' &&
+        command[2] == '\n' &&
+        command[3] == '\0';
 }
 
 
@@ -103,7 +143,7 @@ static uint32_t stress_next(
 
 /*
  * ============================================================
- * Kernel heap stress test
+ * Heap stress test
  * ============================================================
  */
 static int heap_stress_test(void)
@@ -112,9 +152,6 @@ static int heap_stress_test(void)
         0x12345678U;
 
 
-    /*
-     * Repeat the complete test.
-     */
     for (
         uint32_t round = 0;
         round < HEAP_STRESS_ROUNDS;
@@ -122,11 +159,7 @@ static int heap_stress_test(void)
     ) {
 
         /*
-         * ==================================================
-         * Phase 1
-         *
-         * Allocate many blocks.
-         * ==================================================
+         * Allocate blocks.
          */
         for (
             uint32_t i = 0;
@@ -159,7 +192,7 @@ static int heap_stress_test(void)
 
 
             /*
-             * Fill memory with deterministic pattern.
+             * Fill memory.
              */
             uint8_t pattern =
                 (uint8_t)(
@@ -177,6 +210,7 @@ static int heap_stress_test(void)
                 j < size;
                 ++j
             ) {
+
                 bytes[j] =
                     pattern;
             }
@@ -184,11 +218,7 @@ static int heap_stress_test(void)
 
 
         /*
-         * ==================================================
-         * Phase 2
-         *
-         * Verify all blocks.
-         * ==================================================
+         * Verify every block.
          */
         for (
             uint32_t i = 0;
@@ -220,20 +250,14 @@ static int heap_stress_test(void)
 
 
         /*
-         * Verify heap metadata.
+         * Validate heap.
          */
         if (!kmalloc_validate())
             return 0;
 
 
         /*
-         * ==================================================
-         * Phase 3
-         *
          * Free every second block.
-         *
-         * Creates fragmentation.
-         * ==================================================
          */
         for (
             uint32_t i = 0;
@@ -250,18 +274,14 @@ static int heap_stress_test(void)
 
 
         /*
-         * Heap must remain valid.
+         * Validate fragmented heap.
          */
         if (!kmalloc_validate())
             return 0;
 
 
         /*
-         * ==================================================
-         * Phase 4
-         *
-         * Reuse freed blocks with different sizes.
-         * ==================================================
+         * Reuse the freed blocks.
          */
         for (
             uint32_t i = 0;
@@ -302,14 +322,12 @@ static int heap_stress_test(void)
                 j < size;
                 ++j
             ) {
+
                 bytes[j] =
                     pattern;
             }
 
 
-            /*
-             * Verify immediately.
-             */
             for (
                 uint32_t j = 0;
                 j < size;
@@ -323,18 +341,14 @@ static int heap_stress_test(void)
 
 
         /*
-         * Verify heap again.
+         * Validate again.
          */
         if (!kmalloc_validate())
             return 0;
 
 
         /*
-         * ==================================================
-         * Phase 5
-         *
          * Free everything.
-         * ==================================================
          */
         for (
             uint32_t i = 0;
@@ -379,7 +393,7 @@ void kmain(
 
     /*
      * ==================================================
-     * Serial debug console
+     * Serial
      * ==================================================
      */
     serial_init();
@@ -394,7 +408,7 @@ void kmain(
 
     /*
      * ==================================================
-     * VGA console
+     * VGA
      * ==================================================
      */
     console_init();
@@ -405,8 +419,9 @@ void kmain(
     );
 
     console_write(
-        "firstOS v0.0.13\n"
+        "firstOS v0.0.14\n"
     );
+
 
     console_set_color(
         VGA_LGREY,
@@ -420,7 +435,7 @@ void kmain(
 
     /*
      * ==================================================
-     * Multiboot verification
+     * Multiboot
      * ==================================================
      */
     if (magic != MULTIBOOT_MAGIC) {
@@ -572,11 +587,7 @@ void kmain(
 
     /*
      * ==================================================
-     * Physical Memory Manager
-     *
-     * IMPORTANT:
-     *
-     * PMM is initialized before STI.
+     * PMM
      * ==================================================
      */
     pmm_init(
@@ -675,9 +686,11 @@ void kmain(
         pmm_alloc_page();
 
 
-    if (page_a == 0 ||
-        page_b == 0)
-    {
+    if (
+        page_a == 0 ||
+        page_b == 0
+    ) {
+
         console_set_color(
             VGA_LRED,
             VGA_BLACK
@@ -743,7 +756,7 @@ void kmain(
 
     /*
      * ==================================================
-     * Kernel Heap initialization
+     * Kernel heap
      * ==================================================
      */
     kmalloc_init();
@@ -759,7 +772,7 @@ void kmain(
 
     /*
      * ==================================================
-     * Basic kmalloc allocation test
+     * Basic heap allocation test
      * ==================================================
      */
     console_set_color(
@@ -786,10 +799,12 @@ void kmain(
         (char *)kmalloc(512);
 
 
-    if (heap_a == 0 ||
+    if (
+        heap_a == 0 ||
         heap_b == 0 ||
-        heap_c == 0)
-    {
+        heap_c == 0
+    ) {
+
         console_set_color(
             VGA_LRED,
             VGA_BLACK
@@ -807,9 +822,6 @@ void kmain(
     }
 
 
-    /*
-     * Write test data.
-     */
     heap_a[0] = 'A';
     heap_a[1] = '\0';
 
@@ -853,7 +865,7 @@ void kmain(
 
     /*
      * ==================================================
-     * kfree + reuse test
+     * kfree + reuse
      * ==================================================
      */
     kfree(
@@ -1091,9 +1103,6 @@ void kmain(
     );
 
 
-    /*
-     * Build identity-mapped page tables.
-     */
     if (!paging_init()) {
 
         console_set_color(
@@ -1137,16 +1146,11 @@ void kmain(
 
 
     /*
-     * Enable paging.
-     *
-     * Interrupts are still disabled.
+     * Enable paging while interrupts are still off.
      */
     paging_enable();
 
 
-    /*
-     * Verify CR0.PG.
-     */
     if (!paging_is_enabled()) {
 
         console_set_color(
@@ -1181,7 +1185,7 @@ void kmain(
 
 
     /*
-     * Display mapped page count.
+     * Mapped page count.
      */
     console_write(
         "[info] mapped pages: "
@@ -1211,20 +1215,17 @@ void kmain(
 
     /*
      * ==================================================
-     * Paging memory access test
+     * Paging memory test
      * ==================================================
-     *
-     * This variable lives in kernel BSS/data.
-     *
-     * Since the current paging implementation
-     * is identity-mapped, the variable's linear
-     * address remains valid.
      */
     volatile uint32_t paging_test =
         0x12345678U;
 
 
-    if (paging_test != 0x12345678U) {
+    if (
+        paging_test !=
+        0x12345678U
+    ) {
 
         console_set_color(
             VGA_LRED,
@@ -1247,7 +1248,10 @@ void kmain(
         0xDEADBEEFU;
 
 
-    if (paging_test != 0xDEADBEEFU) {
+    if (
+        paging_test !=
+        0xDEADBEEFU
+    ) {
 
         console_set_color(
             VGA_LRED,
@@ -1282,7 +1286,373 @@ void kmain(
 
     /*
      * ==================================================
-     * Enable hardware interrupts
+     * Paging subsystem map/unmap test
+     * ==================================================
+     */
+    console_set_color(
+        VGA_YELLOW,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[test] paging map/unmap subsystem\n"
+    );
+
+    serial_write(
+        "[test] paging map/unmap subsystem\n"
+    );
+
+
+    /*
+     * Test virtual address.
+     */
+    #define PAGING_TEST_VIRTUAL 0x00800000U
+
+
+    uint32_t original_physical = 0;
+    uint32_t original_flags = 0;
+
+
+    /*
+     * Query original identity mapping.
+     */
+    if (!paging_get_page(
+            PAGING_TEST_VIRTUAL,
+            &original_physical,
+            &original_flags
+        ))
+    {
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] get_page before remap\n"
+        );
+
+        serial_write(
+            "[fail] get_page before remap\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    /*
+     * Allocate temporary physical page.
+     */
+    uint32_t test_physical =
+        pmm_alloc_page();
+
+
+    if (
+        test_physical == 0
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] test physical page allocation\n"
+        );
+
+        serial_write(
+            "[fail] test physical page allocation\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    /*
+     * Map virtual page.
+     */
+    if (!paging_map_page(
+            PAGING_TEST_VIRTUAL,
+            test_physical,
+            PAGE_WRITABLE
+        ))
+    {
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] map_page\n"
+        );
+
+        serial_write(
+            "[fail] map_page\n"
+        );
+
+        pmm_free_page(
+            test_physical
+        );
+
+        halt_cpu();
+    }
+
+
+    console_set_color(
+        VGA_LGREEN,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[ ok ] map_page\n"
+    );
+
+    serial_write(
+        "[ ok ] map_page\n"
+    );
+
+
+    /*
+     * Query mapping.
+     */
+    uint32_t mapped_physical = 0;
+    uint32_t mapped_flags = 0;
+
+
+    if (!paging_get_page(
+            PAGING_TEST_VIRTUAL,
+            &mapped_physical,
+            &mapped_flags
+        ))
+    {
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] get_page after map\n"
+        );
+
+        serial_write(
+            "[fail] get_page after map\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    if (
+        mapped_physical !=
+        test_physical
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] physical mapping mismatch\n"
+        );
+
+        serial_write(
+            "[fail] physical mapping mismatch\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_write(
+        "[ ok ] get_page\n"
+    );
+
+    serial_write(
+        "[ ok ] get_page\n"
+    );
+
+
+    /*
+     * Access virtual address.
+     */
+    volatile uint32_t *test_virtual =
+        (volatile uint32_t *)(
+            uintptr_t
+        )PAGING_TEST_VIRTUAL;
+
+
+    *test_virtual =
+        0xCAFEBABEU;
+
+
+    if (
+        *test_virtual !=
+        0xCAFEBABEU
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] mapped virtual memory access\n"
+        );
+
+        serial_write(
+            "[fail] mapped virtual memory access\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_write(
+        "[ ok ] mapped virtual memory access\n"
+    );
+
+    serial_write(
+        "[ ok ] mapped virtual memory access\n"
+    );
+
+
+    /*
+     * Unmap.
+     */
+    if (!paging_unmap_page(
+            PAGING_TEST_VIRTUAL
+        ))
+    {
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] unmap_page\n"
+        );
+
+        serial_write(
+            "[fail] unmap_page\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_write(
+        "[ ok ] unmap_page\n"
+    );
+
+    serial_write(
+        "[ ok ] unmap_page\n"
+    );
+
+
+    /*
+     * Confirm unmapped.
+     */
+    if (paging_get_page(
+            PAGING_TEST_VIRTUAL,
+            &mapped_physical,
+            &mapped_flags
+        ))
+    {
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] page still mapped\n"
+        );
+
+        serial_write(
+            "[fail] page still mapped\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_write(
+        "[ ok ] page unmapped\n"
+    );
+
+    serial_write(
+        "[ ok ] page unmapped\n"
+    );
+
+
+    /*
+     * Restore original identity mapping.
+     */
+    if (!paging_map_page(
+            PAGING_TEST_VIRTUAL,
+            original_physical,
+            original_flags
+        ))
+    {
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] restore original mapping\n"
+        );
+
+        serial_write(
+            "[fail] restore original mapping\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_write(
+        "[ ok ] original mapping restored\n"
+    );
+
+    serial_write(
+        "[ ok ] original mapping restored\n"
+    );
+
+
+    /*
+     * Return temporary page to PMM.
+     */
+    pmm_free_page(
+        test_physical
+    );
+
+
+    console_write(
+        "[ ok ] test physical page released\n"
+    );
+
+    serial_write(
+        "[ ok ] test physical page released\n"
+    );
+
+
+    console_set_color(
+        VGA_LGREEN,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[ ok ] paging subsystem test passed\n"
+    );
+
+    serial_write(
+        "[ ok ] paging subsystem test passed\n"
+    );
+
+
+    /*
+     * ==================================================
+     * Enable interrupts
      * ==================================================
      */
     console_set_color(
@@ -1301,379 +1671,6 @@ void kmain(
 
     __asm__ volatile ("sti");
 
-
-
-    /*
- * ==================================================
- * Paging subsystem test
- * ==================================================
- */
-
-console_set_color(
-    VGA_YELLOW,
-    VGA_BLACK
-);
-
-console_write(
-    "[test] paging map/unmap subsystem\n"
-);
-
-serial_write(
-    "[test] paging map/unmap subsystem\n"
-);
-
-
-/*
- * Use a virtual page inside the existing
- * identity-mapped 128 MiB range.
- *
- * 8 MiB is safely outside the small kernel
- * image while remaining inside the bootstrap map.
- */
-#define PAGING_TEST_VIRTUAL 0x00800000U
-
-
-/*
- * Find the existing identity mapping.
- *
- * We will temporarily replace it.
- */
-uint32_t original_physical = 0;
-uint32_t original_flags = 0;
-
-if (!paging_get_page(
-        PAGING_TEST_VIRTUAL,
-        &original_physical,
-        &original_flags
-    ))
-{
-    console_set_color(
-        VGA_LRED,
-        VGA_BLACK
-    );
-
-    console_write(
-        "[fail] get_page before remap\n"
-    );
-
-    serial_write(
-        "[fail] get_page before remap\n"
-    );
-
-    halt_cpu();
-}
-
-
-/*
- * Allocate one physical test page.
- */
-uint32_t test_physical =
-    pmm_alloc_page();
-
-
-if (test_physical == 0) {
-
-    console_set_color(
-        VGA_LRED,
-        VGA_BLACK
-    );
-
-    console_write(
-        "[fail] test physical page allocation\n"
-    );
-
-    serial_write(
-        "[fail] test physical page allocation\n"
-    );
-
-    halt_cpu();
-}
-
-
-/*
- * Map virtual page to the new physical page.
- */
-if (!paging_map_page(
-        PAGING_TEST_VIRTUAL,
-        test_physical,
-        PAGE_WRITABLE
-    ))
-{
-    console_set_color(
-        VGA_LRED,
-        VGA_BLACK
-    );
-
-    console_write(
-        "[fail] map_page\n"
-    );
-
-    serial_write(
-        "[fail] map_page\n"
-    );
-
-    pmm_free_page(
-        test_physical
-    );
-
-    halt_cpu();
-}
-
-
-console_set_color(
-    VGA_LGREEN,
-    VGA_BLACK
-);
-
-console_write(
-    "[ ok ] map_page\n"
-);
-
-serial_write(
-    "[ ok ] map_page\n"
-);
-
-
-/*
- * Verify page-table result.
- */
-uint32_t mapped_physical = 0;
-uint32_t mapped_flags = 0;
-
-if (!paging_get_page(
-        PAGING_TEST_VIRTUAL,
-        &mapped_physical,
-        &mapped_flags
-    ))
-{
-    console_set_color(
-        VGA_LRED,
-        VGA_BLACK
-    );
-
-    console_write(
-        "[fail] get_page after map\n"
-    );
-
-    serial_write(
-        "[fail] get_page after map\n"
-    );
-
-    halt_cpu();
-}
-
-
-if (
-    mapped_physical != test_physical
-)
-{
-    console_set_color(
-        VGA_LRED,
-        VGA_BLACK
-    );
-
-    console_write(
-        "[fail] physical mapping mismatch\n"
-    );
-
-    serial_write(
-        "[fail] physical mapping mismatch\n"
-    );
-
-    halt_cpu();
-}
-
-
-console_write(
-    "[ ok ] get_page\n"
-);
-
-serial_write(
-    "[ ok ] get_page\n"
-);
-
-
-/*
- * Access the virtual address.
- *
- * The CPU should now translate:
- *
- *     PAGING_TEST_VIRTUAL
- *
- * to:
- *
- *     test_physical
- */
-volatile uint32_t *test_virtual =
-    (volatile uint32_t *)(
-        uintptr_t
-    )PAGING_TEST_VIRTUAL;
-
-
-*test_virtual =
-    0xCAFEBABEU;
-
-
-if (*test_virtual != 0xCAFEBABEU) {
-
-    console_set_color(
-        VGA_LRED,
-        VGA_BLACK
-    );
-
-    console_write(
-        "[fail] mapped virtual memory access\n"
-    );
-
-    serial_write(
-        "[fail] mapped virtual memory access\n"
-    );
-
-    halt_cpu();
-}
-
-
-console_write(
-    "[ ok ] mapped virtual memory access\n"
-);
-
-serial_write(
-    "[ ok ] mapped virtual memory access\n"
-);
-
-
-/*
- * Unmap.
- */
-if (!paging_unmap_page(
-        PAGING_TEST_VIRTUAL
-    ))
-{
-    console_set_color(
-        VGA_LRED,
-        VGA_BLACK
-    );
-
-    console_write(
-        "[fail] unmap_page\n"
-    );
-
-    serial_write(
-        "[fail] unmap_page\n"
-    );
-
-    halt_cpu();
-}
-
-
-console_write(
-    "[ ok ] unmap_page\n"
-);
-
-serial_write(
-    "[ ok ] unmap_page\n"
-);
-
-
-/*
- * Verify that page is now unmapped.
- */
-if (paging_get_page(
-        PAGING_TEST_VIRTUAL,
-        &mapped_physical,
-        &mapped_flags
-    ))
-{
-    console_set_color(
-        VGA_LRED,
-        VGA_BLACK
-    );
-
-    console_write(
-        "[fail] page still mapped\n"
-    );
-
-    serial_write(
-        "[fail] page still mapped\n"
-    );
-
-    halt_cpu();
-}
-
-
-console_write(
-    "[ ok ] page unmapped\n"
-);
-
-serial_write(
-    "[ ok ] page unmapped\n"
-);
-
-
-/*
- * Restore original identity mapping.
- */
-if (!paging_map_page(
-        PAGING_TEST_VIRTUAL,
-        original_physical,
-        original_flags
-    ))
-{
-    console_set_color(
-        VGA_LRED,
-        VGA_BLACK
-    );
-
-    console_write(
-        "[fail] restore original mapping\n"
-    );
-
-    serial_write(
-        "[fail] restore original mapping\n"
-    );
-
-    halt_cpu();
-}
-
-
-console_write(
-    "[ ok ] original mapping restored\n"
-);
-
-serial_write(
-    "[ ok ] original mapping restored\n"
-);
-
-
-/*
- * Release the temporary physical page.
- */
-pmm_free_page(
-    test_physical
-);
-
-
-console_write(
-    "[ ok ] test physical page released\n"
-);
-
-serial_write(
-    "[ ok ] test physical page released\n"
-);
-
-
-console_set_color(
-    VGA_LGREEN,
-    VGA_BLACK
-);
-
-console_write(
-    "[ ok ] paging subsystem test passed\n"
-);
-
-serial_write(
-    "[ ok ] paging subsystem test passed\n"
-);
 
     /*
      * ==================================================
@@ -1696,7 +1693,7 @@ serial_write(
 
     /*
      * ==================================================
-     * Basic command input loop
+     * Command loop
      * ==================================================
      */
     for (;;) {
@@ -1709,6 +1706,54 @@ serial_write(
 
 
         if (length > 0) {
+
+            /*
+             * Page Fault test command.
+             *
+             * Type:
+             *
+             *   pf
+             *
+             * This intentionally accesses an unmapped
+             * virtual address.
+             */
+            if (command_is_pf(command)) {
+
+                console_set_color(
+                    VGA_YELLOW,
+                    VGA_BLACK
+                );
+
+                console_write(
+                    "\n[test] triggering page fault\n"
+                );
+
+
+                serial_write(
+                    "\n[test] triggering page fault\n"
+                );
+
+
+                /*
+                 * Intentional Page Fault.
+                 */
+                volatile uint32_t *bad =
+                    (volatile uint32_t *)(
+                        uintptr_t)
+                        PAGE_FAULT_TEST_ADDRESS;
+
+
+                uint32_t value =
+                    *bad;
+
+
+                /*
+                 * Prevent compiler from removing
+                 * the access.
+                 */
+                (void)value;
+            }
+
 
             console_write(
                 "\nreceived: "

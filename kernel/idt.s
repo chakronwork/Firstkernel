@@ -13,7 +13,9 @@ idt_flush:
 
 
 /*
- * Common ISR entry point.
+ * ============================================================
+ * Common ISR entry point
+ * ============================================================
  *
  * Before pusha:
  *
@@ -35,11 +37,15 @@ idt_flush:
  *   esp + 28  = eax
  *   esp + 32  = int_no
  *   esp + 36  = err_code
+ *   esp + 40  = eip
+ *   esp + 44  = cs
+ *   esp + 48  = eflags
  */
 .global isr_common
 .type isr_common, @function
 
 isr_common:
+
     pusha
 
     /*
@@ -51,11 +57,13 @@ isr_common:
      * Pass pointer to registers structure.
      */
     push %esp
+
     call isr_handler
+
     add $4, %esp
 
     /*
-     * Restore general-purpose registers.
+     * Restore registers.
      */
     popa
 
@@ -76,7 +84,9 @@ isr_common:
 
 
 /*
- * ISR without CPU-provided error code.
+ * ============================================================
+ * ISR without CPU error code
+ * ============================================================
  *
  * We push:
  *
@@ -89,21 +99,25 @@ isr_common:
 .type isr\n, @function
 
 isr\n:
+
     push $0
     push $\n
+
     jmp isr_common
 
 .endm
 
 
 /*
- * ISR with CPU-provided error code.
+ * ============================================================
+ * ISR with CPU-provided error code
+ * ============================================================
  *
  * CPU already pushed:
  *
  *   error code
  *
- * We only push:
+ * We push only:
  *
  *   interrupt number
  */
@@ -113,14 +127,18 @@ isr\n:
 .type isr\n, @function
 
 isr\n:
+
     push $\n
+
     jmp isr_common
 
 .endm
 
 
 /*
+ * ============================================================
  * CPU Exceptions 0-31
+ * ============================================================
  */
 
 ISR_NOERR 0
@@ -166,12 +184,13 @@ ISR_NOERR 31
 
 
 /*
+ * ============================================================
  * Hardware IRQs
+ * ============================================================
  *
  * IRQ0 -> vector 32
  * IRQ1 -> vector 33
  */
-
 ISR_NOERR 32
 ISR_NOERR 33
 
