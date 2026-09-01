@@ -15,9 +15,14 @@
 
 #define COMMAND_BUFFER_SIZE 128
 
+#define HEAP_STRESS_SLOTS 64
+#define HEAP_STRESS_ROUNDS 10
+
 
 /*
- * Halt CPU permanently.
+ * ============================================================
+ * CPU halt
+ * ============================================================
  */
 static void halt_cpu(void)
 {
@@ -29,7 +34,9 @@ static void halt_cpu(void)
 
 
 /*
- * Print unsigned 32-bit integer.
+ * ============================================================
+ * Decimal output
+ * ============================================================
  */
 static void print_uint32(
     uint32_t value
@@ -63,6 +70,324 @@ static void print_uint32(
 }
 
 
+/*
+ * ============================================================
+ * Heap stress-test state
+ * ============================================================
+ */
+static void *stress_ptrs[
+    HEAP_STRESS_SLOTS
+];
+
+
+static uint32_t stress_sizes[
+    HEAP_STRESS_SLOTS
+];
+
+
+/*
+ * ============================================================
+ * Simple deterministic pseudo-random generator
+ * ============================================================
+ *
+ * We intentionally use a deterministic sequence.
+ *
+ * That means a failure can be reproduced with
+ * exactly the same allocation pattern.
+ */
+static uint32_t stress_next(
+    uint32_t value
+)
+{
+    return
+        value * 1664525U +
+        1013904223U;
+}
+
+
+/*
+ * ============================================================
+ * Heap stress test
+ * ============================================================
+ */
+static int heap_stress_test(void)
+{
+    uint32_t seed =
+        0x12345678U;
+
+
+    /*
+     * ==================================================
+     * Repeat the complete test several times.
+     * ==================================================
+     */
+    for (
+        uint32_t round = 0;
+        round < HEAP_STRESS_ROUNDS;
+        ++round
+    ) {
+
+        /*
+         * ==================================================
+         * Phase 1
+         *
+         * Allocate many blocks.
+         * ==================================================
+         */
+        for (
+            uint32_t i = 0;
+            i < HEAP_STRESS_SLOTS;
+            ++i
+        ) {
+
+            seed =
+                stress_next(seed);
+
+
+            /*
+             * Generate allocation size:
+             *
+             * 8 .. 512 bytes
+             */
+            uint32_t size =
+                8U +
+                (seed % 505U);
+
+
+            stress_sizes[i] =
+                size;
+
+
+            stress_ptrs[i] =
+                kmalloc(size);
+
+
+            /*
+             * Allocation failure.
+             */
+            if (stress_ptrs[i] == 0)
+                return 0;
+
+
+            /*
+             * Fill allocation with a known
+             * per-slot pattern.
+             */
+            uint8_t pattern =
+                (uint8_t)(
+                    0xA0U +
+                    (i & 0x0FU)
+                );
+
+
+            uint8_t *bytes =
+                (uint8_t *)stress_ptrs[i];
+
+
+            for (
+                uint32_t j = 0;
+                j < size;
+                ++j
+            ) {
+                bytes[j] =
+                    pattern;
+            }
+        }
+
+
+        /*
+         * ==================================================
+         * Phase 2
+         *
+         * Verify all allocations.
+         * ==================================================
+         */
+        for (
+            uint32_t i = 0;
+            i < HEAP_STRESS_SLOTS;
+            ++i
+        ) {
+
+            uint8_t pattern =
+                (uint8_t)(
+                    0xA0U +
+                    (i & 0x0FU)
+                );
+
+
+            uint8_t *bytes =
+                (uint8_t *)stress_ptrs[i];
+
+
+            for (
+                uint32_t j = 0;
+                j < stress_sizes[i];
+                ++j
+            ) {
+
+                if (bytes[j] != pattern)
+                    return 0;
+            }
+        }
+
+
+        /*
+         * Heap metadata must still be valid.
+         */
+        if (!kmalloc_validate())
+            return 0;
+
+
+        /*
+         * ==================================================
+         * Phase 3
+         *
+         * Free every second block.
+         *
+         * This intentionally creates fragmentation.
+         * ==================================================
+         */
+        for (
+            uint32_t i = 0;
+            i < HEAP_STRESS_SLOTS;
+            i += 2
+        ) {
+
+            kfree(
+                stress_ptrs[i]
+            );
+
+            stress_ptrs[i] = 0;
+        }
+
+
+        /*
+         * Heap must survive fragmentation.
+         */
+        if (!kmalloc_validate())
+            return 0;
+
+
+        /*
+         * ==================================================
+         * Phase 4
+         *
+         * Reuse freed blocks with different sizes.
+         *
+         * This exercises:
+         *
+         *   - first-fit
+         *   - block splitting
+         *   - free-list reuse
+         * ==================================================
+         */
+        for (
+            uint32_t i = 0;
+            i < HEAP_STRESS_SLOTS;
+            i += 2
+        ) {
+
+            uint32_t size =
+                16U +
+                ((i * 13U) % 200U);
+
+
+            stress_sizes[i] =
+                size;
+
+
+            stress_ptrs[i] =
+                kmalloc(size);
+
+
+            if (stress_ptrs[i] == 0)
+                return 0;
+
+
+            /*
+             * Write a different pattern.
+             */
+            uint8_t pattern =
+                (uint8_t)(
+                    0x50U +
+                    (i & 0x0FU)
+                );
+
+
+            uint8_t *bytes =
+                (uint8_t *)stress_ptrs[i];
+
+
+            for (
+                uint32_t j = 0;
+                j < size;
+                ++j
+            ) {
+                bytes[j] =
+                    pattern;
+            }
+
+
+            /*
+             * Verify immediately.
+             */
+            for (
+                uint32_t j = 0;
+                j < size;
+                ++j
+            ) {
+
+                if (bytes[j] != pattern)
+                    return 0;
+            }
+        }
+
+
+        /*
+         * Heap metadata must remain valid.
+         */
+        if (!kmalloc_validate())
+            return 0;
+
+
+        /*
+         * ==================================================
+         * Phase 5
+         *
+         * Free everything.
+         * ==================================================
+         */
+        for (
+            uint32_t i = 0;
+            i < HEAP_STRESS_SLOTS;
+            ++i
+        ) {
+
+            kfree(
+                stress_ptrs[i]
+            );
+
+            stress_ptrs[i] = 0;
+        }
+
+
+        /*
+         * Final validation for this round.
+         */
+        if (!kmalloc_validate())
+            return 0;
+    }
+
+
+    return 1;
+}
+
+
+/*
+ * ============================================================
+ * Kernel entry point
+ * ============================================================
+ */
 void kmain(
     uint32_t magic,
     uint32_t mbi_addr
@@ -101,8 +426,9 @@ void kmain(
     );
 
     console_write(
-        "firstOS v0.0.11\n"
+        "firstOS v0.0.12\n"
     );
+
 
     console_set_color(
         VGA_LGREY,
@@ -272,7 +598,7 @@ void kmain(
      *
      * IMPORTANT:
      *
-     * PMM is initialized BEFORE STI.
+     * PMM must initialize before interrupts.
      * ==================================================
      */
     pmm_init(
@@ -442,7 +768,7 @@ void kmain(
 
     /*
      * ==================================================
-     * Kernel Heap
+     * Kernel Heap initialization
      * ==================================================
      */
     kmalloc_init();
@@ -458,7 +784,7 @@ void kmain(
 
     /*
      * ==================================================
-     * Kernel Heap allocation test
+     * Basic kmalloc test
      * ==================================================
      */
     console_set_color(
@@ -510,7 +836,7 @@ void kmain(
 
 
     /*
-     * Write test data into allocated memory.
+     * Write test data.
      */
     heap_a[0] = 'A';
     heap_a[1] = '\0';
@@ -572,12 +898,11 @@ void kmain(
 
 
     /*
-     * Allocate again.
-     *
-     * This should reuse the free block.
+     * Reuse freed block.
      */
     void *heap_d =
         kmalloc(64);
+
 
     if (heap_d == 0) {
 
@@ -614,7 +939,90 @@ void kmain(
 
     /*
      * ==================================================
-     * Kernel Heap statistics
+     * Heap hardening / stress test
+     * ==================================================
+     */
+    console_set_color(
+        VGA_YELLOW,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[test] heap stress test\n"
+    );
+
+    serial_write(
+        "[test] heap stress test\n"
+    );
+
+
+    if (!heap_stress_test()) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] heap integrity/stress test\n"
+        );
+
+        serial_write(
+            "[fail] heap integrity/stress test\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_set_color(
+        VGA_LGREEN,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[ ok ] heap stress test passed\n"
+    );
+
+    serial_write(
+        "[ ok ] heap stress test passed\n"
+    );
+
+
+    /*
+     * Final heap integrity validation.
+     */
+    if (!kmalloc_validate()) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] final heap validation\n"
+        );
+
+        serial_write(
+            "[fail] final heap validation\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_write(
+        "[ ok ] final heap validation passed\n"
+    );
+
+    serial_write(
+        "[ ok ] final heap validation passed\n"
+    );
+
+
+    /*
+     * ==================================================
+     * Heap statistics
      * ==================================================
      */
     console_write(

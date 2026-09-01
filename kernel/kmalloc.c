@@ -5,87 +5,141 @@
 
 
 /*
- * Kernel heap block alignment.
- *
- * 8-byte alignment is enough for the current
- * 32-bit kernel and keeps returned addresses
- * suitably aligned for normal C objects.
+ * ============================================================
+ * Configuration
+ * ============================================================
  */
+
 #define KMALLOC_ALIGNMENT 8U
+
+#define KMALLOC_MAGIC 0x4B4D414CU
 
 
 /*
- * Minimum useful remainder when splitting
- * a free block.
+ * Minimum split remainder:
  *
- * We need space for another block header
- * plus at least 8 bytes of payload.
+ * block header + minimum 8-byte payload
  */
 #define KMALLOC_MIN_SPLIT \
     (sizeof(struct heap_block) + KMALLOC_ALIGNMENT)
 
 
 /*
- * Heap block header.
+ * Maximum number of blocks that can safely
+ * exist in one physical page is naturally
+ * limited by the page size.
+ */
+
+
+/*
+ * ============================================================
+ * Heap block
+ * ============================================================
  *
- * Memory layout:
+ * Memory:
  *
- *   +----------------------+
- *   | struct heap_block    |
- *   +----------------------+
- *   | user memory          |
- *   |                      |
- *   +----------------------+
- *
- * The block itself lives inside a physical
- * page obtained from the PMM.
+ *   +---------------------------+
+ *   | struct heap_block         |
+ *   +---------------------------+
+ *   | user memory               |
+ *   |                           |
+ *   +---------------------------+
  */
 struct heap_block {
+
+    /*
+     * Integrity marker.
+     */
+    uint32_t magic;
+
+    /*
+     * Payload size.
+     */
     uint32_t size;
 
+    /*
+     * 1 = free
+     * 0 = allocated
+     */
     uint32_t free;
 
+    /*
+     * Doubly-linked list.
+     */
     struct heap_block *next;
     struct heap_block *prev;
 } __attribute__((aligned(KMALLOC_ALIGNMENT)));
 
 
 /*
- * First block in the heap.
+ * ============================================================
+ * Heap state
+ * ============================================================
  */
+
 static struct heap_block *heap_head = 0;
 
-
-/*
- * Number of physical pages acquired by
- * the kernel heap.
- */
 static uint32_t heap_pages = 0;
 
-
-/*
- * Number of bytes currently allocated
- * to callers.
- */
 static uint32_t heap_used = 0;
 
 
 /*
- * Align value upward to 8 bytes.
+ * ============================================================
+ * Alignment
+ * ============================================================
  */
 static uint32_t align_up(uint32_t value)
 {
-    return (
+    uint32_t remainder;
+
+    remainder =
+        value & (KMALLOC_ALIGNMENT - 1U);
+
+    if (remainder == 0)
+        return value;
+
+    /*
+     * Detect uint32 overflow.
+     */
+    if (value >
+        0xFFFFFFFFU -
+        (KMALLOC_ALIGNMENT - remainder))
+    {
+        return 0;
+    }
+
+    return
         value +
-        KMALLOC_ALIGNMENT - 1U
-    ) &
-    ~(KMALLOC_ALIGNMENT - 1U);
+        (KMALLOC_ALIGNMENT - remainder);
+}
+
+
+/*
+ * ============================================================
+ * Block helpers
+ * ============================================================
+ */
+
+
+/*
+ * Check whether block magic is valid.
+ */
+static int block_magic_valid(
+    const struct heap_block *block
+)
+{
+    if (block == 0)
+        return 0;
+
+    return block->magic ==
+           KMALLOC_MAGIC;
 }
 
 
 /*
  * Check whether two blocks are physically
- * adjacent in memory.
+ * adjacent.
  */
 static int blocks_are_adjacent(
     struct heap_block *a,
@@ -98,10 +152,19 @@ static int blocks_are_adjacent(
     if (a == 0 || b == 0)
         return 0;
 
+    if (!block_magic_valid(a))
+        return 0;
+
+    if (!block_magic_valid(b))
+        return 0;
+
     a_end =
         (uintptr_t)a +
         sizeof(struct heap_block) +
-        a->size;
+        (uintptr_t)a->size;
+
+    if (a_end < (uintptr_t)a)
+        return 0;
 
     expected =
         (uintptr_t)b;
@@ -111,13 +174,154 @@ static int blocks_are_adjacent(
 
 
 /*
- * Split a block into:
+ * ============================================================
+ * Heap validation
+ * ============================================================
  *
- *   [allocated block]
- *   [free block]
+ * This function walks the entire linked list and checks:
  *
- * Only split if the remainder is large enough
- * to hold another block header and usable data.
+ *   - magic
+ *   - block size
+ *   - alignment
+ *   - prev/next relationships
+ *   - address ordering
+ *
+ * It does NOT attempt to recover corrupted metadata.
+ */
+int kmalloc_validate(void)
+{
+    struct heap_block *block;
+    struct heap_block *previous;
+
+    uint32_t counted_used = 0;
+
+    uint32_t guard = 0;
+
+
+    block =
+        heap_head;
+
+    previous = 0;
+
+
+    while (block != 0) {
+
+        /*
+         * Safety guard.
+         *
+         * A corrupted linked list could otherwise
+         * produce an infinite loop.
+         */
+        guard++;
+
+        if (guard > 65536U)
+            return 0;
+
+
+        /*
+         * Validate block address alignment.
+         */
+        if (((uintptr_t)block &
+             (KMALLOC_ALIGNMENT - 1U)) != 0)
+        {
+            return 0;
+        }
+
+
+        /*
+         * Validate magic.
+         */
+        if (!block_magic_valid(block))
+            return 0;
+
+
+        /*
+         * Payload size must be aligned.
+         */
+        if ((block->size &
+             (KMALLOC_ALIGNMENT - 1U)) != 0)
+        {
+            return 0;
+        }
+
+
+        /*
+         * A block cannot have zero payload.
+         */
+        if (block->size == 0)
+            return 0;
+
+
+        /*
+         * prev pointer must agree.
+         */
+        if (block->prev != previous)
+            return 0;
+
+
+        /*
+         * next pointer relationship.
+         */
+        if (block->next != 0) {
+
+            if (block->next->prev != block)
+                return 0;
+
+            /*
+             * Block list must be in ascending
+             * virtual address order.
+             */
+            if ((uintptr_t)block->next <=
+                (uintptr_t)block)
+            {
+                return 0;
+            }
+        }
+
+
+        /*
+         * Count allocated bytes.
+         */
+        if (!block->free) {
+
+            /*
+             * Protect counter from overflow.
+             */
+            if (counted_used >
+                0xFFFFFFFFU -
+                block->size)
+            {
+                return 0;
+            }
+
+            counted_used +=
+                block->size;
+        }
+
+
+        previous =
+            block;
+
+        block =
+            block->next;
+    }
+
+
+    /*
+     * Internal accounting must match.
+     */
+    if (counted_used != heap_used)
+        return 0;
+
+
+    return 1;
+}
+
+
+/*
+ * ============================================================
+ * Split block
+ * ============================================================
  */
 static void split_block(
     struct heap_block *block,
@@ -125,19 +329,31 @@ static void split_block(
 )
 {
     uint32_t remaining;
+
     struct heap_block *new_block;
 
+
     if (block == 0)
+        return;
+
+    if (!block_magic_valid(block))
         return;
 
     if (block->size <= requested_size)
         return;
 
-    remaining =
-        block->size - requested_size;
 
-    if (remaining < KMALLOC_MIN_SPLIT)
+    remaining =
+        block->size -
+        requested_size;
+
+
+    if (remaining <
+        KMALLOC_MIN_SPLIT)
+    {
         return;
+    }
+
 
     new_block =
         (struct heap_block *)(
@@ -146,19 +362,32 @@ static void split_block(
             requested_size
         );
 
+
+    /*
+     * Initialize new block.
+     */
+    new_block->magic =
+        KMALLOC_MAGIC;
+
     new_block->size =
         remaining -
         sizeof(struct heap_block);
 
     new_block->free = 1;
 
-    new_block->prev = block;
-    new_block->next = block->next;
+    new_block->prev =
+        block;
+
+    new_block->next =
+        block->next;
+
 
     if (new_block->next != 0) {
+
         new_block->next->prev =
             new_block;
     }
+
 
     block->next =
         new_block;
@@ -169,7 +398,9 @@ static void split_block(
 
 
 /*
- * Merge a block with its next free block.
+ * ============================================================
+ * Merge block with next
+ * ============================================================
  */
 static void merge_with_next(
     struct heap_block *block
@@ -177,17 +408,28 @@ static void merge_with_next(
 {
     struct heap_block *next;
 
+
     if (block == 0)
         return;
+
+    if (!block_magic_valid(block))
+        return;
+
 
     next =
         block->next;
 
+
     if (next == 0)
         return;
 
+    if (!block_magic_valid(next))
+        return;
+
+
     if (!next->free)
         return;
+
 
     if (!blocks_are_adjacent(
             block,
@@ -197,22 +439,53 @@ static void merge_with_next(
         return;
     }
 
+
+    /*
+     * Prevent arithmetic overflow.
+     */
+    if (block->size >
+        0xFFFFFFFFU -
+        sizeof(struct heap_block) -
+        next->size)
+    {
+        return;
+    }
+
+
     block->size +=
         sizeof(struct heap_block) +
         next->size;
 
+
     block->next =
         next->next;
 
+
     if (block->next != 0) {
+
         block->next->prev =
             block;
     }
+
+
+    /*
+     * Clear merged-out block metadata.
+     *
+     * This makes accidental reuse easier to detect
+     * during debugging.
+     */
+    next->magic = 0;
+    next->size = 0;
+    next->free = 1;
+    next->next = 0;
+    next->prev = 0;
 }
 
 
 /*
- * Coalesce neighboring free blocks.
+ * ============================================================
+ * Coalescing
+ * ============================================================
  */
 static void coalesce(
     struct heap_block *block
@@ -221,53 +494,81 @@ static void coalesce(
     if (block == 0)
         return;
 
+
+    if (!block_magic_valid(block))
+        return;
+
+
     /*
-     * Merge forward first.
+     * Merge forward.
      */
     merge_with_next(block);
 
+
     /*
-     * Then merge backward.
+     * Merge backward.
      */
-    if (block->prev != 0 &&
-        block->prev->free)
-    {
-        if (blocks_are_adjacent(
-                block->prev,
-                block
-            ))
+    if (block->prev != 0) {
+
+        struct heap_block *previous =
+            block->prev;
+
+
+        if (block_magic_valid(previous) &&
+            previous->free)
         {
-            merge_with_next(
-                block->prev
-            );
+            if (blocks_are_adjacent(
+                    previous,
+                    block
+                ))
+            {
+                merge_with_next(
+                    previous
+                );
+            }
         }
     }
 }
 
 
 /*
- * Request one new physical page from PMM
- * and turn it into a free heap block.
+ * ============================================================
+ * Grow heap
+ * ============================================================
  */
 static struct heap_block *grow_heap(void)
 {
     uint32_t physical_page;
+
     struct heap_block *block;
     struct heap_block *last;
+
 
     physical_page =
         pmm_alloc_page();
 
+
     if (physical_page == 0)
         return 0;
 
+
     /*
-     * Before paging exists, physical address
-     * and kernel linear address are equivalent
-     * in the current environment.
+     * Before paging exists:
+     *
+     * physical address == current
+     * kernel linear address.
      */
     block =
-        (struct heap_block *)(uintptr_t)physical_page;
+        (struct heap_block *)(
+            (uintptr_t)physical_page
+        );
+
+
+    /*
+     * Initialize block.
+     */
+    block->magic =
+        KMALLOC_MAGIC;
 
     block->size =
         PMM_PAGE_SIZE -
@@ -278,25 +579,43 @@ static struct heap_block *grow_heap(void)
     block->next = 0;
     block->prev = 0;
 
+
     heap_pages++;
 
 
     /*
-     * First heap page.
+     * First page.
      */
     if (heap_head == 0) {
-        heap_head = block;
+
+        heap_head =
+            block;
+
         return block;
     }
 
 
     /*
-     * Find the end of the block list.
+     * Find last block.
      */
-    last = heap_head;
+    last =
+        heap_head;
+
 
     while (last->next != 0) {
-        last = last->next;
+
+        /*
+         * Heap should already be valid.
+         *
+         * If corruption is detected, abandon
+         * the operation rather than traversing
+         * arbitrary memory indefinitely.
+         */
+        if (!block_magic_valid(last))
+            return 0;
+
+        last =
+            last->next;
     }
 
 
@@ -306,12 +625,15 @@ static struct heap_block *grow_heap(void)
     block->prev =
         last;
 
+
     return block;
 }
 
 
 /*
- * Initialize heap state.
+ * ============================================================
+ * Initialize
+ * ============================================================
  */
 void kmalloc_init(void)
 {
@@ -323,17 +645,40 @@ void kmalloc_init(void)
 
 
 /*
- * Allocate kernel memory.
+ * ============================================================
+ * Allocate
+ * ============================================================
  */
 void *kmalloc(uint32_t size)
 {
     struct heap_block *block;
 
+    uint32_t aligned_size;
+
+
+    /*
+     * Zero-sized allocation is invalid.
+     */
     if (size == 0)
         return 0;
 
-    size =
+
+    /*
+     * Align requested size.
+     */
+    aligned_size =
         align_up(size);
+
+
+    /*
+     * Overflow.
+     */
+    if (aligned_size == 0)
+        return 0;
+
+
+    size =
+        aligned_size;
 
 
     /*
@@ -342,7 +687,16 @@ void *kmalloc(uint32_t size)
     block =
         heap_head;
 
+
     while (block != 0) {
+
+        /*
+         * Corrupted metadata:
+         * do not continue.
+         */
+        if (!block_magic_valid(block))
+            return 0;
+
 
         if (block->free &&
             block->size >= size)
@@ -352,10 +706,26 @@ void *kmalloc(uint32_t size)
                 size
             );
 
+
             block->free = 0;
+
+
+            if (heap_used >
+                0xFFFFFFFFU -
+                block->size)
+            {
+                /*
+                 * Undo allocation state.
+                 */
+                block->free = 1;
+
+                return 0;
+            }
+
 
             heap_used +=
                 block->size;
+
 
             return (void *)(
                 (uintptr_t)block +
@@ -363,36 +733,74 @@ void *kmalloc(uint32_t size)
             );
         }
 
+
         block =
             block->next;
     }
 
 
     /*
-     * No existing block can satisfy
-     * the request.
+     * No free block found.
      *
-     * Acquire another physical page.
+     * Grow heap.
      */
     block =
         grow_heap();
+
 
     if (block == 0)
         return 0;
 
 
     /*
-     * A newly acquired page is free.
+     * A new physical page contains:
+     *
+     *   [block header][free payload]
      */
     split_block(
         block,
         size
     );
 
+
+    /*
+     * It might be impossible to satisfy
+     * a request larger than one page.
+     *
+     * Current allocator intentionally does
+     * not support multi-page contiguous
+     * allocations yet.
+     */
+    if (block->size < size) {
+
+        /*
+         * Return the page to PMM only if this
+         * is the only block in that page.
+         *
+         * For now, leave it as a free heap block
+         * rather than attempting page rollback.
+         */
+        block->free = 1;
+
+        return 0;
+    }
+
+
     block->free = 0;
+
+
+    if (heap_used >
+        0xFFFFFFFFU -
+        block->size)
+    {
+        block->free = 1;
+        return 0;
+    }
+
 
     heap_used +=
         block->size;
+
 
     return (void *)(
         (uintptr_t)block +
@@ -402,45 +810,103 @@ void *kmalloc(uint32_t size)
 
 
 /*
- * Free kernel memory.
+ * ============================================================
+ * Free
+ * ============================================================
  */
 void kfree(void *ptr)
 {
     struct heap_block *block;
 
+    uintptr_t user_address;
+
+
+    /*
+     * NULL is always ignored.
+     */
     if (ptr == 0)
         return;
 
 
-    block =
-        (struct heap_block *)(
-            (uintptr_t)ptr -
-            sizeof(struct heap_block)
-        );
+    user_address =
+        (uintptr_t)ptr;
 
 
     /*
-     * Protect against obvious double free.
+     * DO NOT blindly subtract a header
+     * from an arbitrary pointer.
+     *
+     * Search for the exact user pointer.
+     */
+    block =
+        heap_head;
+
+
+    while (block != 0) {
+
+        /*
+         * Corrupted heap.
+         *
+         * Refuse to continue.
+         */
+        if (!block_magic_valid(block))
+            return;
+
+
+        /*
+         * Calculate exact user address.
+         */
+        uintptr_t expected =
+            (uintptr_t)block +
+            sizeof(struct heap_block);
+
+
+        if (user_address == expected)
+            break;
+
+
+        block =
+            block->next;
+    }
+
+
+    /*
+     * Pointer was not allocated by this heap.
+     */
+    if (block == 0)
+        return;
+
+
+    /*
+     * Double free.
      */
     if (block->free)
         return;
 
 
-    block->free = 1;
-
-
+    /*
+     * Accounting.
+     */
     if (heap_used >= block->size)
         heap_used -= block->size;
     else
         heap_used = 0;
 
 
+    block->free = 1;
+
+
+    /*
+     * Merge neighboring free blocks.
+     */
     coalesce(block);
 }
 
 
 /*
- * Return number of heap pages.
+ * ============================================================
+ * Statistics
+ * ============================================================
  */
 uint32_t kmalloc_get_pages(void)
 {
@@ -448,34 +914,47 @@ uint32_t kmalloc_get_pages(void)
 }
 
 
-/*
- * Return bytes currently allocated.
- */
 uint32_t kmalloc_get_used(void)
 {
     return heap_used;
 }
 
 
-/*
- * Return bytes available in free blocks.
- */
 uint32_t kmalloc_get_free(void)
 {
     uint32_t total = 0;
+
     struct heap_block *block;
+
 
     block =
         heap_head;
 
+
     while (block != 0) {
 
-        if (block->free)
-            total += block->size;
+        if (!block_magic_valid(block))
+            return 0;
+
+
+        if (block->free) {
+
+            if (total >
+                0xFFFFFFFFU -
+                block->size)
+            {
+                return 0;
+            }
+
+            total +=
+                block->size;
+        }
+
 
         block =
             block->next;
     }
+
 
     return total;
 }

@@ -3,19 +3,15 @@
 
 #include <stdint.h>
 
+
 /*
  * Initialize kernel heap.
- *
- * The current implementation is lazy:
- * no physical page is allocated here.
- * Pages are requested from PMM when kmalloc()
- * actually needs them.
  */
 void kmalloc_init(void);
 
 
 /*
- * Allocate a block of kernel memory.
+ * Allocate kernel memory.
  *
  * Returns:
  *
@@ -27,26 +23,38 @@ void *kmalloc(uint32_t size);
 
 
 /*
- * Free a previously allocated block.
+ * Free previously allocated memory.
+ *
+ * Invalid pointers and double frees are ignored.
  */
 void kfree(void *ptr);
 
 
 /*
- * Return total number of heap pages acquired.
+ * Validate the entire heap structure.
+ *
+ * Returns:
+ *
+ *   1 = valid
+ *   0 = corruption detected
+ */
+int kmalloc_validate(void);
+
+
+/*
+ * Return number of heap pages acquired.
  */
 uint32_t kmalloc_get_pages(void);
 
 
 /*
- * Return number of bytes currently allocated.
+ * Return bytes currently allocated.
  */
 uint32_t kmalloc_get_used(void);
 
 
 /*
- * Return number of bytes currently available
- * inside existing heap blocks.
+ * Return bytes available inside free blocks.
  */
 uint32_t kmalloc_get_free(void);
 
