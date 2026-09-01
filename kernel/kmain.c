@@ -7,6 +7,7 @@
 #include "timer.h"
 #include "keyboard.h"
 #include "pmm.h"
+#include "kmalloc.h"
 #include "serial.h"
 
 
@@ -39,7 +40,6 @@ static void print_uint32(
 
 
     if (value == 0) {
-
         console_putc('0');
         return;
     }
@@ -101,9 +101,8 @@ void kmain(
     );
 
     console_write(
-        "firstOS v0.0.10\n"
+        "firstOS v0.0.11\n"
     );
-
 
     console_set_color(
         VGA_LGREY,
@@ -291,7 +290,7 @@ void kmain(
 
     /*
      * ==================================================
-     * Display PMM statistics
+     * PMM statistics
      * ==================================================
      */
     console_write(
@@ -420,7 +419,7 @@ void kmain(
 
     /*
      * ==================================================
-     * Free pages
+     * Free PMM pages
      * ==================================================
      */
     pmm_free_page(
@@ -438,6 +437,261 @@ void kmain(
 
     serial_write(
         "[ ok ] pages freed\n"
+    );
+
+
+    /*
+     * ==================================================
+     * Kernel Heap
+     * ==================================================
+     */
+    kmalloc_init();
+
+    console_write(
+        "[ ok ] kernel heap initialized\n"
+    );
+
+    serial_write(
+        "[ ok ] kernel heap initialized\n"
+    );
+
+
+    /*
+     * ==================================================
+     * Kernel Heap allocation test
+     * ==================================================
+     */
+    console_set_color(
+        VGA_YELLOW,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[test] kernel heap allocation\n"
+    );
+
+    serial_write(
+        "[test] kernel heap allocation\n"
+    );
+
+
+    char *heap_a =
+        (char *)kmalloc(32);
+
+    char *heap_b =
+        (char *)kmalloc(128);
+
+    char *heap_c =
+        (char *)kmalloc(512);
+
+
+    /*
+     * Allocation failure.
+     */
+    if (heap_a == 0 ||
+        heap_b == 0 ||
+        heap_c == 0)
+    {
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] kernel heap allocation\n"
+        );
+
+        serial_write(
+            "[fail] kernel heap allocation\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    /*
+     * Write test data into allocated memory.
+     */
+    heap_a[0] = 'A';
+    heap_a[1] = '\0';
+
+    heap_b[0] = 'B';
+    heap_b[1] = '\0';
+
+    heap_c[0] = 'C';
+    heap_c[1] = '\0';
+
+
+    console_set_color(
+        VGA_LGREEN,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[ ok ] kmalloc(32)\n"
+    );
+
+    console_write(
+        "[ ok ] kmalloc(128)\n"
+    );
+
+    console_write(
+        "[ ok ] kmalloc(512)\n"
+    );
+
+
+    serial_write(
+        "[ ok ] kmalloc(32)\n"
+    );
+
+    serial_write(
+        "[ ok ] kmalloc(128)\n"
+    );
+
+    serial_write(
+        "[ ok ] kmalloc(512)\n"
+    );
+
+
+    /*
+     * ==================================================
+     * kfree test
+     * ==================================================
+     */
+    kfree(
+        heap_b
+    );
+
+    console_write(
+        "[ ok ] kfree(128)\n"
+    );
+
+    serial_write(
+        "[ ok ] kfree(128)\n"
+    );
+
+
+    /*
+     * Allocate again.
+     *
+     * This should reuse the free block.
+     */
+    void *heap_d =
+        kmalloc(64);
+
+    if (heap_d == 0) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] heap block reuse\n"
+        );
+
+        serial_write(
+            "[fail] heap block reuse\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_set_color(
+        VGA_LGREEN,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[ ok ] heap block reuse\n"
+    );
+
+    serial_write(
+        "[ ok ] heap block reuse\n"
+    );
+
+
+    /*
+     * ==================================================
+     * Kernel Heap statistics
+     * ==================================================
+     */
+    console_write(
+        "[info] heap pages: "
+    );
+
+    print_uint32(
+        kmalloc_get_pages()
+    );
+
+    console_write(
+        "\n"
+    );
+
+
+    serial_write(
+        "[info] heap pages: "
+    );
+
+    serial_write_dec(
+        kmalloc_get_pages()
+    );
+
+    serial_write(
+        "\n"
+    );
+
+
+    console_write(
+        "[info] heap used:  "
+    );
+
+    print_uint32(
+        kmalloc_get_used()
+    );
+
+    console_write(
+        "\n"
+    );
+
+
+    serial_write(
+        "[info] heap used:  "
+    );
+
+    serial_write_dec(
+        kmalloc_get_used()
+    );
+
+    serial_write(
+        "\n"
+    );
+
+
+    console_write(
+        "[info] heap free:  "
+    );
+
+    print_uint32(
+        kmalloc_get_free()
+    );
+
+    console_write(
+        "\n"
+    );
+
+
+    serial_write(
+        "[info] heap free:  "
+    );
+
+    serial_write_dec(
+        kmalloc_get_free()
+    );
+
+    serial_write(
+        "\n"
     );
 
 
