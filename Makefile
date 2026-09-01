@@ -1,10 +1,12 @@
 CC := gcc
 AS := gcc
 
+
 CFLAGS := -std=gnu11 -m32 -ffreestanding -O2 -Wall -Wextra -Iinclude \
           -fno-stack-protector \
           -fno-pie \
           -mno-red-zone
+
 
 LDFLAGS := -m32 -ffreestanding -O2 -nostdlib -no-pie \
            -Wl,--build-id=none \
@@ -25,6 +27,7 @@ OBJS := \
     kernel/serial.o \
     kernel/pmm.o \
     kernel/kmalloc.o \
+    kernel/paging.o \
     kernel/kmain.o \
     kernel/vga.o
 
@@ -77,6 +80,10 @@ kernel/pmm.o: kernel/pmm.c
 
 
 kernel/kmalloc.o: kernel/kmalloc.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+
+kernel/paging.o: kernel/paging.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 

@@ -8,6 +8,7 @@
 #include "keyboard.h"
 #include "pmm.h"
 #include "kmalloc.h"
+#include "paging.h"
 #include "serial.h"
 
 
@@ -87,13 +88,8 @@ static uint32_t stress_sizes[
 
 /*
  * ============================================================
- * Simple deterministic pseudo-random generator
+ * Deterministic pseudo-random generator
  * ============================================================
- *
- * We intentionally use a deterministic sequence.
- *
- * That means a failure can be reproduced with
- * exactly the same allocation pattern.
  */
 static uint32_t stress_next(
     uint32_t value
@@ -107,7 +103,7 @@ static uint32_t stress_next(
 
 /*
  * ============================================================
- * Heap stress test
+ * Kernel heap stress test
  * ============================================================
  */
 static int heap_stress_test(void)
@@ -117,9 +113,7 @@ static int heap_stress_test(void)
 
 
     /*
-     * ==================================================
-     * Repeat the complete test several times.
-     * ==================================================
+     * Repeat the complete test.
      */
     for (
         uint32_t round = 0;
@@ -145,9 +139,7 @@ static int heap_stress_test(void)
 
 
             /*
-             * Generate allocation size:
-             *
-             * 8 .. 512 bytes
+             * 8 .. 512 bytes.
              */
             uint32_t size =
                 8U +
@@ -162,16 +154,12 @@ static int heap_stress_test(void)
                 kmalloc(size);
 
 
-            /*
-             * Allocation failure.
-             */
             if (stress_ptrs[i] == 0)
                 return 0;
 
 
             /*
-             * Fill allocation with a known
-             * per-slot pattern.
+             * Fill memory with deterministic pattern.
              */
             uint8_t pattern =
                 (uint8_t)(
@@ -199,7 +187,7 @@ static int heap_stress_test(void)
          * ==================================================
          * Phase 2
          *
-         * Verify all allocations.
+         * Verify all blocks.
          * ==================================================
          */
         for (
@@ -232,7 +220,7 @@ static int heap_stress_test(void)
 
 
         /*
-         * Heap metadata must still be valid.
+         * Verify heap metadata.
          */
         if (!kmalloc_validate())
             return 0;
@@ -244,7 +232,7 @@ static int heap_stress_test(void)
          *
          * Free every second block.
          *
-         * This intentionally creates fragmentation.
+         * Creates fragmentation.
          * ==================================================
          */
         for (
@@ -262,7 +250,7 @@ static int heap_stress_test(void)
 
 
         /*
-         * Heap must survive fragmentation.
+         * Heap must remain valid.
          */
         if (!kmalloc_validate())
             return 0;
@@ -273,12 +261,6 @@ static int heap_stress_test(void)
          * Phase 4
          *
          * Reuse freed blocks with different sizes.
-         *
-         * This exercises:
-         *
-         *   - first-fit
-         *   - block splitting
-         *   - free-list reuse
          * ==================================================
          */
         for (
@@ -304,9 +286,6 @@ static int heap_stress_test(void)
                 return 0;
 
 
-            /*
-             * Write a different pattern.
-             */
             uint8_t pattern =
                 (uint8_t)(
                     0x50U +
@@ -344,7 +323,7 @@ static int heap_stress_test(void)
 
 
         /*
-         * Heap metadata must remain valid.
+         * Verify heap again.
          */
         if (!kmalloc_validate())
             return 0;
@@ -426,9 +405,8 @@ void kmain(
     );
 
     console_write(
-        "firstOS v0.0.12\n"
+        "firstOS v0.0.13\n"
     );
-
 
     console_set_color(
         VGA_LGREY,
@@ -598,7 +576,7 @@ void kmain(
      *
      * IMPORTANT:
      *
-     * PMM must initialize before interrupts.
+     * PMM is initialized before STI.
      * ==================================================
      */
     pmm_init(
@@ -697,9 +675,6 @@ void kmain(
         pmm_alloc_page();
 
 
-    /*
-     * Allocation failure.
-     */
     if (page_a == 0 ||
         page_b == 0)
     {
@@ -784,7 +759,7 @@ void kmain(
 
     /*
      * ==================================================
-     * Basic kmalloc test
+     * Basic kmalloc allocation test
      * ==================================================
      */
     console_set_color(
@@ -811,9 +786,6 @@ void kmain(
         (char *)kmalloc(512);
 
 
-    /*
-     * Allocation failure.
-     */
     if (heap_a == 0 ||
         heap_b == 0 ||
         heap_c == 0)
@@ -881,7 +853,7 @@ void kmain(
 
     /*
      * ==================================================
-     * kfree test
+     * kfree + reuse test
      * ==================================================
      */
     kfree(
@@ -897,9 +869,6 @@ void kmain(
     );
 
 
-    /*
-     * Reuse freed block.
-     */
     void *heap_d =
         kmalloc(64);
 
@@ -939,7 +908,7 @@ void kmain(
 
     /*
      * ==================================================
-     * Heap hardening / stress test
+     * Heap stress test
      * ==================================================
      */
     console_set_color(
@@ -990,7 +959,7 @@ void kmain(
 
 
     /*
-     * Final heap integrity validation.
+     * Final heap validation.
      */
     if (!kmalloc_validate()) {
 
@@ -1100,6 +1069,214 @@ void kmain(
 
     serial_write(
         "\n"
+    );
+
+
+    /*
+     * ==================================================
+     * Paging initialization
+     * ==================================================
+     */
+    console_set_color(
+        VGA_YELLOW,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[test] initializing paging\n"
+    );
+
+    serial_write(
+        "[test] initializing paging\n"
+    );
+
+
+    /*
+     * Build identity-mapped page tables.
+     */
+    if (!paging_init()) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] paging initialization\n"
+        );
+
+        serial_write(
+            "[fail] paging initialization\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_set_color(
+        VGA_LGREEN,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[ ok ] page directory initialized\n"
+    );
+
+    serial_write(
+        "[ ok ] page directory initialized\n"
+    );
+
+
+    console_write(
+        "[ ok ] page tables initialized\n"
+    );
+
+    serial_write(
+        "[ ok ] page tables initialized\n"
+    );
+
+
+    /*
+     * Enable paging.
+     *
+     * Interrupts are still disabled.
+     */
+    paging_enable();
+
+
+    /*
+     * Verify CR0.PG.
+     */
+    if (!paging_is_enabled()) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] paging enable\n"
+        );
+
+        serial_write(
+            "[fail] paging enable\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_set_color(
+        VGA_LGREEN,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[ ok ] paging enabled\n"
+    );
+
+    serial_write(
+        "[ ok ] paging enabled\n"
+    );
+
+
+    /*
+     * Display mapped page count.
+     */
+    console_write(
+        "[info] mapped pages: "
+    );
+
+    print_uint32(
+        paging_get_mapped_pages()
+    );
+
+    console_write(
+        "\n"
+    );
+
+
+    serial_write(
+        "[info] mapped pages: "
+    );
+
+    serial_write_dec(
+        paging_get_mapped_pages()
+    );
+
+    serial_write(
+        "\n"
+    );
+
+
+    /*
+     * ==================================================
+     * Paging memory access test
+     * ==================================================
+     *
+     * This variable lives in kernel BSS/data.
+     *
+     * Since the current paging implementation
+     * is identity-mapped, the variable's linear
+     * address remains valid.
+     */
+    volatile uint32_t paging_test =
+        0x12345678U;
+
+
+    if (paging_test != 0x12345678U) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] paging memory access\n"
+        );
+
+        serial_write(
+            "[fail] paging memory access\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    paging_test =
+        0xDEADBEEFU;
+
+
+    if (paging_test != 0xDEADBEEFU) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] paging write/read test\n"
+        );
+
+        serial_write(
+            "[fail] paging write/read test\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_set_color(
+        VGA_LGREEN,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[ ok ] paging memory access test\n"
+    );
+
+    serial_write(
+        "[ ok ] paging memory access test\n"
     );
 
 
