@@ -1302,6 +1302,379 @@ void kmain(
     __asm__ volatile ("sti");
 
 
+
+    /*
+ * ==================================================
+ * Paging subsystem test
+ * ==================================================
+ */
+
+console_set_color(
+    VGA_YELLOW,
+    VGA_BLACK
+);
+
+console_write(
+    "[test] paging map/unmap subsystem\n"
+);
+
+serial_write(
+    "[test] paging map/unmap subsystem\n"
+);
+
+
+/*
+ * Use a virtual page inside the existing
+ * identity-mapped 128 MiB range.
+ *
+ * 8 MiB is safely outside the small kernel
+ * image while remaining inside the bootstrap map.
+ */
+#define PAGING_TEST_VIRTUAL 0x00800000U
+
+
+/*
+ * Find the existing identity mapping.
+ *
+ * We will temporarily replace it.
+ */
+uint32_t original_physical = 0;
+uint32_t original_flags = 0;
+
+if (!paging_get_page(
+        PAGING_TEST_VIRTUAL,
+        &original_physical,
+        &original_flags
+    ))
+{
+    console_set_color(
+        VGA_LRED,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[fail] get_page before remap\n"
+    );
+
+    serial_write(
+        "[fail] get_page before remap\n"
+    );
+
+    halt_cpu();
+}
+
+
+/*
+ * Allocate one physical test page.
+ */
+uint32_t test_physical =
+    pmm_alloc_page();
+
+
+if (test_physical == 0) {
+
+    console_set_color(
+        VGA_LRED,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[fail] test physical page allocation\n"
+    );
+
+    serial_write(
+        "[fail] test physical page allocation\n"
+    );
+
+    halt_cpu();
+}
+
+
+/*
+ * Map virtual page to the new physical page.
+ */
+if (!paging_map_page(
+        PAGING_TEST_VIRTUAL,
+        test_physical,
+        PAGE_WRITABLE
+    ))
+{
+    console_set_color(
+        VGA_LRED,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[fail] map_page\n"
+    );
+
+    serial_write(
+        "[fail] map_page\n"
+    );
+
+    pmm_free_page(
+        test_physical
+    );
+
+    halt_cpu();
+}
+
+
+console_set_color(
+    VGA_LGREEN,
+    VGA_BLACK
+);
+
+console_write(
+    "[ ok ] map_page\n"
+);
+
+serial_write(
+    "[ ok ] map_page\n"
+);
+
+
+/*
+ * Verify page-table result.
+ */
+uint32_t mapped_physical = 0;
+uint32_t mapped_flags = 0;
+
+if (!paging_get_page(
+        PAGING_TEST_VIRTUAL,
+        &mapped_physical,
+        &mapped_flags
+    ))
+{
+    console_set_color(
+        VGA_LRED,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[fail] get_page after map\n"
+    );
+
+    serial_write(
+        "[fail] get_page after map\n"
+    );
+
+    halt_cpu();
+}
+
+
+if (
+    mapped_physical != test_physical
+)
+{
+    console_set_color(
+        VGA_LRED,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[fail] physical mapping mismatch\n"
+    );
+
+    serial_write(
+        "[fail] physical mapping mismatch\n"
+    );
+
+    halt_cpu();
+}
+
+
+console_write(
+    "[ ok ] get_page\n"
+);
+
+serial_write(
+    "[ ok ] get_page\n"
+);
+
+
+/*
+ * Access the virtual address.
+ *
+ * The CPU should now translate:
+ *
+ *     PAGING_TEST_VIRTUAL
+ *
+ * to:
+ *
+ *     test_physical
+ */
+volatile uint32_t *test_virtual =
+    (volatile uint32_t *)(
+        uintptr_t
+    )PAGING_TEST_VIRTUAL;
+
+
+*test_virtual =
+    0xCAFEBABEU;
+
+
+if (*test_virtual != 0xCAFEBABEU) {
+
+    console_set_color(
+        VGA_LRED,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[fail] mapped virtual memory access\n"
+    );
+
+    serial_write(
+        "[fail] mapped virtual memory access\n"
+    );
+
+    halt_cpu();
+}
+
+
+console_write(
+    "[ ok ] mapped virtual memory access\n"
+);
+
+serial_write(
+    "[ ok ] mapped virtual memory access\n"
+);
+
+
+/*
+ * Unmap.
+ */
+if (!paging_unmap_page(
+        PAGING_TEST_VIRTUAL
+    ))
+{
+    console_set_color(
+        VGA_LRED,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[fail] unmap_page\n"
+    );
+
+    serial_write(
+        "[fail] unmap_page\n"
+    );
+
+    halt_cpu();
+}
+
+
+console_write(
+    "[ ok ] unmap_page\n"
+);
+
+serial_write(
+    "[ ok ] unmap_page\n"
+);
+
+
+/*
+ * Verify that page is now unmapped.
+ */
+if (paging_get_page(
+        PAGING_TEST_VIRTUAL,
+        &mapped_physical,
+        &mapped_flags
+    ))
+{
+    console_set_color(
+        VGA_LRED,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[fail] page still mapped\n"
+    );
+
+    serial_write(
+        "[fail] page still mapped\n"
+    );
+
+    halt_cpu();
+}
+
+
+console_write(
+    "[ ok ] page unmapped\n"
+);
+
+serial_write(
+    "[ ok ] page unmapped\n"
+);
+
+
+/*
+ * Restore original identity mapping.
+ */
+if (!paging_map_page(
+        PAGING_TEST_VIRTUAL,
+        original_physical,
+        original_flags
+    ))
+{
+    console_set_color(
+        VGA_LRED,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[fail] restore original mapping\n"
+    );
+
+    serial_write(
+        "[fail] restore original mapping\n"
+    );
+
+    halt_cpu();
+}
+
+
+console_write(
+    "[ ok ] original mapping restored\n"
+);
+
+serial_write(
+    "[ ok ] original mapping restored\n"
+);
+
+
+/*
+ * Release the temporary physical page.
+ */
+pmm_free_page(
+    test_physical
+);
+
+
+console_write(
+    "[ ok ] test physical page released\n"
+);
+
+serial_write(
+    "[ ok ] test physical page released\n"
+);
+
+
+console_set_color(
+    VGA_LGREEN,
+    VGA_BLACK
+);
+
+console_write(
+    "[ ok ] paging subsystem test passed\n"
+);
+
+serial_write(
+    "[ ok ] paging subsystem test passed\n"
+);
+
     /*
      * ==================================================
      * Command line

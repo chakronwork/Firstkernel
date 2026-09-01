@@ -6,12 +6,8 @@
 
 /*
  * ============================================================
- * Page directory
+ * Bootstrap page directory
  * ============================================================
- *
- * 1024 entries × 4 bytes = 4096 bytes
- *
- * Exactly one page.
  */
 static uint32_t page_directory[
     PAGE_DIRECTORY_ENTRIES
@@ -20,14 +16,12 @@ static uint32_t page_directory[
 
 /*
  * ============================================================
- * Page tables
+ * Bootstrap page tables
  * ============================================================
  *
- * 32 tables × 4096 bytes
+ * 32 × 4 KiB = 128 KiB
  *
- * = 128 KiB
- *
- * This is enough to identity-map 128 MiB.
+ * Enough for 128 MiB of identity mapping.
  */
 static uint32_t page_tables[
     PAGING_MAX_PAGE_TABLES
@@ -36,20 +30,113 @@ __attribute__((aligned(PAGE_SIZE)));
 
 
 /*
- * Number of pages actually mapped.
+ * Number of pages mapped during bootstrap.
  */
 static uint32_t mapped_pages = 0;
 
 
 /*
- * Paging state.
+ * ============================================================
+ * Flush one TLB entry.
+ * ============================================================
  */
-static int paging_enabled = 0;
+static void tlb_invalidate(
+    uint32_t virtual_address
+)
+{
+    __asm__ volatile (
+        "invlpg (%0)"
+        :
+        : "r"(virtual_address)
+        : "memory"
+    );
+}
 
 
 /*
  * ============================================================
- * Initialize page directory and page tables.
+ * Clear a physical page.
+ *
+ * Before higher-half / separate address spaces exist,
+ * physical memory is identity mapped, so the physical
+ * address can be accessed directly.
+ * ============================================================
+ */
+static void clear_page(
+    uint32_t physical_address
+)
+{
+    uint32_t *page =
+        (uint32_t *)(uintptr_t)physical_address;
+
+
+    for (
+        uint32_t i = 0;
+        i < PAGE_TABLE_ENTRIES;
+        ++i
+    ) {
+        page[i] = 0;
+    }
+}
+
+
+/*
+ * ============================================================
+ * Get page-directory index.
+ * ============================================================
+ */
+static uint32_t page_directory_index(
+    uint32_t virtual_address
+)
+{
+    return
+        (virtual_address >> 22) &
+        0x3FFU;
+}
+
+
+/*
+ * ============================================================
+ * Get page-table index.
+ * ============================================================
+ */
+static uint32_t page_table_index(
+    uint32_t virtual_address
+)
+{
+    return
+        (virtual_address >> 12) &
+        0x3FFU;
+}
+
+
+/*
+ * ============================================================
+ * Return page-table virtual pointer from PDE.
+ * ============================================================
+ *
+ * Because we currently use identity mapping:
+ *
+ *     physical == virtual
+ */
+static uint32_t *page_table_from_pde(
+    uint32_t pde
+)
+{
+    uint32_t physical_address =
+        pde & 0xFFFFF000U;
+
+
+    return
+        (uint32_t *)(
+            uintptr_t
+        )physical_address;
+}
+
+
+/*
+ * ============================================================
+ * Bootstrap initialization
  * ============================================================
  */
 int paging_init(void)
@@ -58,28 +145,16 @@ int paging_init(void)
     uint32_t table_count;
 
 
-    /*
-     * Get physical memory known by PMM.
-     */
     total_pages =
         pmm_get_total_pages();
 
 
-    /*
-     * No physical memory.
-     */
     if (total_pages == 0)
         return 0;
 
 
     /*
-     * Calculate number of 1024-entry page tables.
-     *
-     * Example:
-     *
-     * 32736 pages / 1024
-     * -> 31 remainder
-     * -> 32 tables required
+     * Calculate required page-table count.
      */
     table_count =
         (
@@ -91,8 +166,8 @@ int paging_init(void)
 
 
     /*
-     * Do not exceed the statically reserved
-     * page table area.
+     * Bootstrap implementation supports
+     * up to 128 MiB.
      */
     if (table_count >
         PAGING_MAX_PAGE_TABLES)
@@ -102,7 +177,7 @@ int paging_init(void)
 
 
     /*
-     * Clear page directory.
+     * Clear directory.
      */
     for (
         uint32_t i = 0;
@@ -114,7 +189,7 @@ int paging_init(void)
 
 
     /*
-     * Clear all page tables.
+     * Clear bootstrap tables.
      */
     for (
         uint32_t table = 0;
@@ -132,16 +207,11 @@ int paging_init(void)
     }
 
 
+    mapped_pages = 0;
+
+
     /*
-     * Build identity mapping.
-     *
-     * Virtual address:
-     *
-     *     0x00123000
-     *
-     * maps to:
-     *
-     *     physical 0x00123000
+     * Build identity map.
      */
     for (
         uint32_t table = 0;
@@ -150,11 +220,10 @@ int paging_init(void)
     ) {
 
         /*
-         * Physical address of this page table.
+         * Physical address of page table.
          *
-         * Since paging is not enabled yet,
-         * the current kernel address is directly
-         * usable by the CPU.
+         * The BSS containing these tables is already
+         * reserved by PMM as part of the kernel image.
          */
         uint32_t table_address =
             (uint32_t)(
@@ -165,16 +234,17 @@ int paging_init(void)
         /*
          * PDE:
          *
-         * bit 0 = Present
-         * bit 1 = Read/Write
+         * PRESENT
+         * WRITABLE
          */
         page_directory[table] =
             table_address |
-            0x003U;
+            PAGE_PRESENT |
+            PAGE_WRITABLE;
 
 
         /*
-         * Fill page table entries.
+         * Fill PTEs.
          */
         for (
             uint32_t entry = 0;
@@ -188,9 +258,6 @@ int paging_init(void)
                 entry;
 
 
-            /*
-             * Do not map beyond actual PMM pages.
-             */
             if (page >= total_pages)
                 break;
 
@@ -200,15 +267,10 @@ int paging_init(void)
                 PAGE_SIZE;
 
 
-            /*
-             * PTE:
-             *
-             * bit 0 = Present
-             * bit 1 = Read/Write
-             */
             page_tables[table][entry] =
                 physical_address |
-                0x003U;
+                PAGE_PRESENT |
+                PAGE_WRITABLE;
 
 
             mapped_pages++;
@@ -222,9 +284,7 @@ int paging_init(void)
 
 /*
  * ============================================================
- * Enable paging.
- *
- * Implemented using inline assembly.
+ * Enable paging
  * ============================================================
  */
 void paging_enable(void)
@@ -237,9 +297,6 @@ void paging_enable(void)
 
     /*
      * Load CR3.
-     *
-     * CR3 contains the physical address of
-     * the page directory.
      */
     __asm__ volatile (
         "mov %0, %%cr3"
@@ -263,12 +320,7 @@ void paging_enable(void)
 
 
     /*
-     * Set CR0.PG (bit 31).
-     *
-     * This enables paging.
-     *
-     * PE (bit 0) should already be enabled
-     * by the existing protected-mode setup.
+     * Enable PG.
      */
     cr0 |= 0x80000000U;
 
@@ -282,20 +334,18 @@ void paging_enable(void)
         : "r"(cr0)
         : "memory"
     );
-
-
-    paging_enabled = 1;
 }
 
 
 /*
  * ============================================================
- * Return paging state.
+ * Paging state
  * ============================================================
  */
 int paging_is_enabled(void)
 {
     uint32_t cr0;
+
 
     __asm__ volatile (
         "mov %%cr0, %0"
@@ -312,10 +362,369 @@ int paging_is_enabled(void)
 
 /*
  * ============================================================
- * Return mapped page count.
+ * Bootstrap mapped page count
  * ============================================================
  */
 uint32_t paging_get_mapped_pages(void)
 {
     return mapped_pages;
+}
+
+
+/*
+ * ============================================================
+ * Map one virtual page.
+ * ============================================================
+ */
+int paging_map_page(
+    uint32_t virtual_address,
+    uint32_t physical_address,
+    uint32_t flags
+)
+{
+    uint32_t directory_index;
+    uint32_t table_index;
+
+    uint32_t pde;
+
+    uint32_t *page_table;
+
+    uint32_t pte;
+
+
+    /*
+     * Both addresses must be page aligned.
+     */
+    if (
+        (virtual_address &
+         (PAGE_SIZE - 1U)) != 0
+    ) {
+        return 0;
+    }
+
+
+    if (
+        (physical_address &
+         (PAGE_SIZE - 1U)) != 0
+    ) {
+        return 0;
+    }
+
+
+    directory_index =
+        page_directory_index(
+            virtual_address
+        );
+
+
+    table_index =
+        page_table_index(
+            virtual_address
+        );
+
+
+    /*
+     * Look at PDE.
+     */
+    pde =
+        page_directory[
+            directory_index
+        ];
+
+
+    /*
+     * Allocate a new page table if needed.
+     */
+    if (
+        (pde & PAGE_PRESENT) == 0
+    ) {
+
+        uint32_t table_physical =
+            pmm_alloc_page();
+
+
+        if (table_physical == 0)
+            return 0;
+
+
+        /*
+         * Clear new page table.
+         */
+        clear_page(
+            table_physical
+        );
+
+
+        /*
+         * Install PDE.
+         */
+        page_directory[
+            directory_index
+        ] =
+            table_physical |
+            PAGE_PRESENT |
+            PAGE_WRITABLE;
+
+
+        pde =
+            page_directory[
+                directory_index
+            ];
+    }
+
+
+    /*
+     * Convert PDE into page-table pointer.
+     */
+    page_table =
+        page_table_from_pde(
+            pde
+        );
+
+
+    /*
+     * Preserve only supported page flags.
+     */
+    flags &=
+        PAGE_PRESENT |
+        PAGE_WRITABLE |
+        PAGE_USER;
+
+
+    /*
+     * A mapped page must be present.
+     */
+    flags |=
+        PAGE_PRESENT;
+
+
+    /*
+     * Install PTE.
+     */
+    pte =
+        physical_address |
+        flags;
+
+
+    page_table[
+        table_index
+    ] =
+        pte;
+
+
+    /*
+     * Flush stale TLB entry.
+     */
+    tlb_invalidate(
+        virtual_address
+    );
+
+
+    return 1;
+}
+
+
+/*
+ * ============================================================
+ * Unmap one virtual page.
+ * ============================================================
+ */
+int paging_unmap_page(
+    uint32_t virtual_address
+)
+{
+    uint32_t directory_index;
+    uint32_t table_index;
+
+    uint32_t pde;
+
+    uint32_t *page_table;
+
+
+    /*
+     * Must be page aligned.
+     */
+    if (
+        (virtual_address &
+         (PAGE_SIZE - 1U)) != 0
+    ) {
+        return 0;
+    }
+
+
+    directory_index =
+        page_directory_index(
+            virtual_address
+        );
+
+
+    table_index =
+        page_table_index(
+            virtual_address
+        );
+
+
+    pde =
+        page_directory[
+            directory_index
+        ];
+
+
+    /*
+     * No page table.
+     */
+    if (
+        (pde & PAGE_PRESENT) == 0
+    ) {
+        return 0;
+    }
+
+
+    page_table =
+        page_table_from_pde(
+            pde
+        );
+
+
+    /*
+     * Page not mapped.
+     */
+    if (
+        (page_table[
+            table_index
+        ] & PAGE_PRESENT) == 0
+    ) {
+        return 0;
+    }
+
+
+    /*
+     * Clear PTE.
+     */
+    page_table[
+        table_index
+    ] = 0;
+
+
+    /*
+     * Flush TLB.
+     */
+    tlb_invalidate(
+        virtual_address
+    );
+
+
+    /*
+     * We intentionally keep the page table.
+     *
+     * Page-table reclamation will be added when
+     * ownership is handled by the VM subsystem.
+     */
+    return 1;
+}
+
+
+/*
+ * ============================================================
+ * Query mapping.
+ * ============================================================
+ */
+int paging_get_page(
+    uint32_t virtual_address,
+    uint32_t *physical_address,
+    uint32_t *flags
+)
+{
+    uint32_t directory_index;
+    uint32_t table_index;
+
+    uint32_t pde;
+
+    uint32_t *page_table;
+
+    uint32_t pte;
+
+
+    if (
+        (virtual_address &
+         (PAGE_SIZE - 1U)) != 0
+    ) {
+        return 0;
+    }
+
+
+    if (physical_address == 0)
+        return 0;
+
+
+    directory_index =
+        page_directory_index(
+            virtual_address
+        );
+
+
+    table_index =
+        page_table_index(
+            virtual_address
+        );
+
+
+    pde =
+        page_directory[
+            directory_index
+        ];
+
+
+    /*
+     * No page table.
+     */
+    if (
+        (pde & PAGE_PRESENT) == 0
+    ) {
+        return 0;
+    }
+
+
+    page_table =
+        page_table_from_pde(
+            pde
+        );
+
+
+    pte =
+        page_table[
+            table_index
+        ];
+
+
+    /*
+     * Page not present.
+     */
+    if (
+        (pte & PAGE_PRESENT) == 0
+    ) {
+        return 0;
+    }
+
+
+    /*
+     * Return physical frame.
+     */
+    *physical_address =
+        pte &
+        0xFFFFF000U;
+
+
+    /*
+     * Return flags.
+     */
+    if (flags != 0) {
+
+        *flags =
+            pte &
+            0x00000FFFU;
+    }
+
+
+    return 1;
 }
