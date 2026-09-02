@@ -19,6 +19,7 @@
 
 #define GDT_USER_CODE   0x18U
 #define GDT_USER_DATA   0x20U
+#define GDT_TSS         0x28U
 
 
 void gdt_init(void);
