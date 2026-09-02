@@ -9,26 +9,34 @@
 #include "pmm.h"
 #include "kmalloc.h"
 #include "paging.h"
+#include "vmm.h"
+#include "address_space.h"
+#include "task.h"
 #include "serial.h"
 
 
-#define MULTIBOOT_MAGIC 0x2BADB002
+#define MULTIBOOT_MAGIC 0x2BADB002U
 
 #define COMMAND_BUFFER_SIZE 128
 
 #define HEAP_STRESS_SLOTS 64
 #define HEAP_STRESS_ROUNDS 10
 
+#define PAGE_FAULT_TEST_ADDRESS 0xF0000000U
+
+#define PAGING_TEST_VIRTUAL 0x00800000U
+
+#define ADDRESS_SPACE_TEST_VIRTUAL 0x40000000U
+
 
 /*
- * Page-fault test address.
- *
- * FirstOS currently identity-maps only the
- * physical memory known to PMM (~128 MiB).
- *
- * 0xF0000000 is therefore intentionally unmapped.
+ * ============================================================
+ * Task test state
+ * ============================================================
  */
-#define PAGE_FAULT_TEST_ADDRESS 0xF0000000U
+static volatile uint32_t task_a_runs = 0;
+
+static volatile uint32_t task_b_runs = 0;
 
 
 /*
@@ -56,6 +64,7 @@ static void print_uint32(
 )
 {
     char buffer[11];
+
     uint32_t i = 0;
 
 
@@ -72,10 +81,10 @@ static void print_uint32(
         buffer[i++] =
             (char)(
                 '0' +
-                (value % 10)
+                (value % 10U)
             );
 
-        value /= 10;
+        value /= 10U;
     }
 
 
@@ -90,10 +99,8 @@ static void print_uint32(
 
 /*
  * ============================================================
- * Compare command with "pf"
+ * Page-fault command
  * ============================================================
- *
- * keyboard_readline() keeps the terminating '\n'.
  */
 static int command_is_pf(
     const char *command
@@ -113,7 +120,7 @@ static int command_is_pf(
 
 /*
  * ============================================================
- * Heap stress-test state
+ * Heap stress state
  * ============================================================
  */
 static void *stress_ptrs[
@@ -171,9 +178,6 @@ static int heap_stress_test(void)
                 stress_next(seed);
 
 
-            /*
-             * 8 .. 512 bytes.
-             */
             uint32_t size =
                 8U +
                 (seed % 505U);
@@ -187,13 +191,13 @@ static int heap_stress_test(void)
                 kmalloc(size);
 
 
-            if (stress_ptrs[i] == 0)
+            if (
+                stress_ptrs[i] == 0
+            ) {
                 return 0;
+            }
 
 
-            /*
-             * Fill memory.
-             */
             uint8_t pattern =
                 (uint8_t)(
                     0xA0U +
@@ -218,7 +222,7 @@ static int heap_stress_test(void)
 
 
         /*
-         * Verify every block.
+         * Verify blocks.
          */
         for (
             uint32_t i = 0;
@@ -243,17 +247,20 @@ static int heap_stress_test(void)
                 ++j
             ) {
 
-                if (bytes[j] != pattern)
+                if (
+                    bytes[j] != pattern
+                ) {
                     return 0;
+                }
             }
         }
 
 
-        /*
-         * Validate heap.
-         */
-        if (!kmalloc_validate())
+        if (
+            !kmalloc_validate()
+        ) {
             return 0;
+        }
 
 
         /*
@@ -269,19 +276,20 @@ static int heap_stress_test(void)
                 stress_ptrs[i]
             );
 
-            stress_ptrs[i] = 0;
+            stress_ptrs[i] =
+                0;
+        }
+
+
+        if (
+            !kmalloc_validate()
+        ) {
+            return 0;
         }
 
 
         /*
-         * Validate fragmented heap.
-         */
-        if (!kmalloc_validate())
-            return 0;
-
-
-        /*
-         * Reuse the freed blocks.
+         * Reuse freed blocks.
          */
         for (
             uint32_t i = 0;
@@ -302,8 +310,11 @@ static int heap_stress_test(void)
                 kmalloc(size);
 
 
-            if (stress_ptrs[i] == 0)
+            if (
+                stress_ptrs[i] == 0
+            ) {
                 return 0;
+            }
 
 
             uint8_t pattern =
@@ -334,17 +345,20 @@ static int heap_stress_test(void)
                 ++j
             ) {
 
-                if (bytes[j] != pattern)
+                if (
+                    bytes[j] != pattern
+                ) {
                     return 0;
+                }
             }
         }
 
 
-        /*
-         * Validate again.
-         */
-        if (!kmalloc_validate())
+        if (
+            !kmalloc_validate()
+        ) {
             return 0;
+        }
 
 
         /*
@@ -360,19 +374,98 @@ static int heap_stress_test(void)
                 stress_ptrs[i]
             );
 
-            stress_ptrs[i] = 0;
+            stress_ptrs[i] =
+                0;
         }
 
 
-        /*
-         * Final validation for this round.
-         */
-        if (!kmalloc_validate())
+        if (
+            !kmalloc_validate()
+        ) {
             return 0;
+        }
     }
 
 
     return 1;
+}
+
+
+/*
+ * ============================================================
+ * Task A
+ * ============================================================
+ */
+static void task_a_entry(
+    void *arg
+)
+{
+    (void)arg;
+
+
+    for (;;) {
+
+        task_a_runs++;
+
+
+        serial_write(
+            "[task A] running\n"
+        );
+
+
+        console_putc(
+            'A'
+        );
+
+
+        if (
+            task_a_runs >= 5U
+        ) {
+            return;
+        }
+
+
+        task_yield();
+    }
+}
+
+
+/*
+ * ============================================================
+ * Task B
+ * ============================================================
+ */
+static void task_b_entry(
+    void *arg
+)
+{
+    (void)arg;
+
+
+    for (;;) {
+
+        task_b_runs++;
+
+
+        serial_write(
+            "[task B] running\n"
+        );
+
+
+        console_putc(
+            'B'
+        );
+
+
+        if (
+            task_b_runs >= 5U
+        ) {
+            return;
+        }
+
+
+        task_yield();
+    }
 }
 
 
@@ -419,7 +512,7 @@ void kmain(
     );
 
     console_write(
-        "firstOS v0.0.14\n"
+        "firstOS v0.0.17\n"
     );
 
 
@@ -438,7 +531,9 @@ void kmain(
      * Multiboot
      * ==================================================
      */
-    if (magic != MULTIBOOT_MAGIC) {
+    if (
+        magic != MULTIBOOT_MAGIC
+    ) {
 
         console_set_color(
             VGA_LRED,
@@ -558,7 +653,9 @@ void kmain(
      * PIT
      * ==================================================
      */
-    timer_init(100);
+    timer_init(
+        100
+    );
 
     console_write(
         "[ ok ] pit timer configured: 100 hz\n"
@@ -790,13 +887,19 @@ void kmain(
 
 
     char *heap_a =
-        (char *)kmalloc(32);
+        (char *)kmalloc(
+            32
+        );
 
     char *heap_b =
-        (char *)kmalloc(128);
+        (char *)kmalloc(
+            128
+        );
 
     char *heap_c =
-        (char *)kmalloc(512);
+        (char *)kmalloc(
+            512
+        );
 
 
     if (
@@ -822,14 +925,23 @@ void kmain(
     }
 
 
-    heap_a[0] = 'A';
-    heap_a[1] = '\0';
+    heap_a[0] =
+        'A';
 
-    heap_b[0] = 'B';
-    heap_b[1] = '\0';
+    heap_a[1] =
+        '\0';
 
-    heap_c[0] = 'C';
-    heap_c[1] = '\0';
+    heap_b[0] =
+        'B';
+
+    heap_b[1] =
+        '\0';
+
+    heap_c[0] =
+        'C';
+
+    heap_c[1] =
+        '\0';
 
 
     console_set_color(
@@ -882,10 +994,14 @@ void kmain(
 
 
     void *heap_d =
-        kmalloc(64);
+        kmalloc(
+            64
+        );
 
 
-    if (heap_d == 0) {
+    if (
+        heap_d == 0
+    ) {
 
         console_set_color(
             VGA_LRED,
@@ -937,7 +1053,9 @@ void kmain(
     );
 
 
-    if (!heap_stress_test()) {
+    if (
+        !heap_stress_test()
+    ) {
 
         console_set_color(
             VGA_LRED,
@@ -973,7 +1091,9 @@ void kmain(
     /*
      * Final heap validation.
      */
-    if (!kmalloc_validate()) {
+    if (
+        !kmalloc_validate()
+    ) {
 
         console_set_color(
             VGA_LRED,
@@ -1103,7 +1223,9 @@ void kmain(
     );
 
 
-    if (!paging_init()) {
+    if (
+        !paging_init()
+    ) {
 
         console_set_color(
             VGA_LRED,
@@ -1131,13 +1253,13 @@ void kmain(
         "[ ok ] page directory initialized\n"
     );
 
-    serial_write(
-        "[ ok ] page directory initialized\n"
+    console_write(
+        "[ ok ] page tables initialized\n"
     );
 
 
-    console_write(
-        "[ ok ] page tables initialized\n"
+    serial_write(
+        "[ ok ] page directory initialized\n"
     );
 
     serial_write(
@@ -1146,12 +1268,14 @@ void kmain(
 
 
     /*
-     * Enable paging while interrupts are still off.
+     * Enable paging.
      */
     paging_enable();
 
 
-    if (!paging_is_enabled()) {
+    if (
+        !paging_is_enabled()
+    ) {
 
         console_set_color(
             VGA_LRED,
@@ -1185,7 +1309,9 @@ void kmain(
 
 
     /*
-     * Mapped page count.
+     * ==================================================
+     * Paging statistics
+     * ==================================================
      */
     console_write(
         "[info] mapped pages: "
@@ -1286,7 +1412,7 @@ void kmain(
 
     /*
      * ==================================================
-     * Paging subsystem map/unmap test
+     * Paging map/unmap subsystem test
      * ==================================================
      */
     console_set_color(
@@ -1303,25 +1429,21 @@ void kmain(
     );
 
 
-    /*
-     * Test virtual address.
-     */
-    #define PAGING_TEST_VIRTUAL 0x00800000U
+    uint32_t original_physical =
+        0;
+
+    uint32_t original_flags =
+        0;
 
 
-    uint32_t original_physical = 0;
-    uint32_t original_flags = 0;
-
-
-    /*
-     * Query original identity mapping.
-     */
-    if (!paging_get_page(
+    if (
+        !paging_get_page(
             PAGING_TEST_VIRTUAL,
             &original_physical,
             &original_flags
-        ))
-    {
+        )
+    ) {
+
         console_set_color(
             VGA_LRED,
             VGA_BLACK
@@ -1339,9 +1461,6 @@ void kmain(
     }
 
 
-    /*
-     * Allocate temporary physical page.
-     */
     uint32_t test_physical =
         pmm_alloc_page();
 
@@ -1367,15 +1486,14 @@ void kmain(
     }
 
 
-    /*
-     * Map virtual page.
-     */
-    if (!paging_map_page(
+    if (
+        !paging_map_page(
             PAGING_TEST_VIRTUAL,
             test_physical,
             PAGE_WRITABLE
-        ))
-    {
+        )
+    ) {
+
         console_set_color(
             VGA_LRED,
             VGA_BLACK
@@ -1411,19 +1529,21 @@ void kmain(
     );
 
 
-    /*
-     * Query mapping.
-     */
-    uint32_t mapped_physical = 0;
-    uint32_t mapped_flags = 0;
+    uint32_t mapped_physical =
+        0;
+
+    uint32_t mapped_flags =
+        0;
 
 
-    if (!paging_get_page(
+    if (
+        !paging_get_page(
             PAGING_TEST_VIRTUAL,
             &mapped_physical,
             &mapped_flags
-        ))
-    {
+        )
+    ) {
+
         console_set_color(
             VGA_LRED,
             VGA_BLACK
@@ -1472,9 +1592,6 @@ void kmain(
     );
 
 
-    /*
-     * Access virtual address.
-     */
     volatile uint32_t *test_virtual =
         (volatile uint32_t *)(
             uintptr_t
@@ -1516,13 +1633,12 @@ void kmain(
     );
 
 
-    /*
-     * Unmap.
-     */
-    if (!paging_unmap_page(
+    if (
+        !paging_unmap_page(
             PAGING_TEST_VIRTUAL
-        ))
-    {
+        )
+    ) {
+
         console_set_color(
             VGA_LRED,
             VGA_BLACK
@@ -1549,15 +1665,14 @@ void kmain(
     );
 
 
-    /*
-     * Confirm unmapped.
-     */
-    if (paging_get_page(
+    if (
+        paging_get_page(
             PAGING_TEST_VIRTUAL,
             &mapped_physical,
             &mapped_flags
-        ))
-    {
+        )
+    ) {
+
         console_set_color(
             VGA_LRED,
             VGA_BLACK
@@ -1584,15 +1699,14 @@ void kmain(
     );
 
 
-    /*
-     * Restore original identity mapping.
-     */
-    if (!paging_map_page(
+    if (
+        !paging_map_page(
             PAGING_TEST_VIRTUAL,
             original_physical,
             original_flags
-        ))
-    {
+        )
+    ) {
+
         console_set_color(
             VGA_LRED,
             VGA_BLACK
@@ -1619,9 +1733,6 @@ void kmain(
     );
 
 
-    /*
-     * Return temporary page to PMM.
-     */
     pmm_free_page(
         test_physical
     );
@@ -1652,8 +1763,987 @@ void kmain(
 
     /*
      * ==================================================
+     * VMM
+     * ==================================================
+     */
+    console_set_color(
+        VGA_YELLOW,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[test] initializing vmm\n"
+    );
+
+    serial_write(
+        "[test] initializing vmm\n"
+    );
+
+
+    if (
+        !vmm_init()
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] vmm initialization\n"
+        );
+
+        serial_write(
+            "[fail] vmm initialization\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_set_color(
+        VGA_LGREEN,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[ ok ] vmm initialized\n"
+    );
+
+    serial_write(
+        "[ ok ] vmm initialized\n"
+    );
+
+
+    console_set_color(
+        VGA_YELLOW,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[test] vmm page allocation\n"
+    );
+
+    serial_write(
+        "[test] vmm page allocation\n"
+    );
+
+
+    uint32_t vmm_page =
+        vmm_alloc_page(
+            PAGE_WRITABLE
+        );
+
+
+    if (
+        vmm_page == 0
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] vmm_alloc_page\n"
+        );
+
+        serial_write(
+            "[fail] vmm_alloc_page\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    volatile uint32_t *vmm_memory =
+        (volatile uint32_t *)(
+            uintptr_t
+        )vmm_page;
+
+
+    *vmm_memory =
+        0xAABBCCDDU;
+
+
+    if (
+        *vmm_memory !=
+        0xAABBCCDDU
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] vmm virtual memory access\n"
+        );
+
+        serial_write(
+            "[fail] vmm virtual memory access\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_write(
+        "[ ok ] vmm virtual memory access\n"
+    );
+
+    serial_write(
+        "[ ok ] vmm virtual memory access\n"
+    );
+
+
+    uint32_t vmm_physical =
+        0;
+
+    uint32_t vmm_flags =
+        0;
+
+
+    if (
+        !paging_get_page(
+            vmm_page,
+            &vmm_physical,
+            &vmm_flags
+        )
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] vmm page mapping query\n"
+        );
+
+        serial_write(
+            "[fail] vmm page mapping query\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_write(
+        "[ ok ] vmm mapping query\n"
+    );
+
+    serial_write(
+        "[ ok ] vmm mapping query\n"
+    );
+
+
+    console_write(
+        "[info] vmm used pages:  "
+    );
+
+    print_uint32(
+        vmm_get_used_pages()
+    );
+
+    console_write(
+        "\n"
+    );
+
+
+    console_write(
+        "[info] vmm free pages:  "
+    );
+
+    print_uint32(
+        vmm_get_free_pages()
+    );
+
+    console_write(
+        "\n"
+    );
+
+
+    serial_write(
+        "[info] vmm used pages:  "
+    );
+
+    serial_write_dec(
+        vmm_get_used_pages()
+    );
+
+    serial_write(
+        "\n"
+    );
+
+
+    serial_write(
+        "[info] vmm free pages:  "
+    );
+
+    serial_write_dec(
+        vmm_get_free_pages()
+    );
+
+    serial_write(
+        "\n"
+    );
+
+
+    if (
+        !vmm_free_page(
+            vmm_page
+        )
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] vmm_free_page\n"
+        );
+
+        serial_write(
+            "[fail] vmm_free_page\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_write(
+        "[ ok ] vmm page released\n"
+    );
+
+    serial_write(
+        "[ ok ] vmm page released\n"
+    );
+
+
+    if (
+        vmm_get_used_pages() != 0
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] vmm page accounting\n"
+        );
+
+        serial_write(
+            "[fail] vmm page accounting\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_set_color(
+        VGA_LGREEN,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[ ok ] virtual memory manager test passed\n"
+    );
+
+    serial_write(
+        "[ ok ] virtual memory manager test passed\n"
+    );
+
+
+    /*
+     * ==================================================
+     * Address Space
+     * ==================================================
+     */
+    console_set_color(
+        VGA_YELLOW,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[test] creating address space\n"
+    );
+
+    serial_write(
+        "[test] creating address space\n"
+    );
+
+
+    struct address_space *test_space =
+        address_space_create();
+
+
+    if (
+        test_space == 0
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] address_space_create\n"
+        );
+
+        serial_write(
+            "[fail] address_space_create\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_set_color(
+        VGA_LGREEN,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[ ok ] address space created\n"
+    );
+
+    serial_write(
+        "[ ok ] address space created\n"
+    );
+
+
+    /*
+     * Allocate test physical frame.
+     */
+    uint32_t user_physical =
+        pmm_alloc_page();
+
+
+    if (
+        user_physical == 0
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] user physical page allocation\n"
+        );
+
+        serial_write(
+            "[fail] user physical page allocation\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    /*
+     * Map user page.
+     */
+    if (
+        !address_space_map_page(
+            test_space,
+            ADDRESS_SPACE_TEST_VIRTUAL,
+            user_physical,
+            PAGE_WRITABLE |
+            PAGE_USER
+        )
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] address_space_map_page\n"
+        );
+
+        serial_write(
+            "[fail] address_space_map_page\n"
+        );
+
+        pmm_free_page(
+            user_physical
+        );
+
+        halt_cpu();
+    }
+
+
+    console_write(
+        "[ ok ] user page mapped\n"
+    );
+
+    serial_write(
+        "[ ok ] user page mapped\n"
+    );
+
+
+    /*
+     * Query mapping.
+     */
+    uint32_t queried_physical =
+        0;
+
+    uint32_t queried_flags =
+        0;
+
+
+    if (
+        !address_space_get_page(
+            test_space,
+            ADDRESS_SPACE_TEST_VIRTUAL,
+            &queried_physical,
+            &queried_flags
+        )
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] address_space_get_page\n"
+        );
+
+        serial_write(
+            "[fail] address_space_get_page\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    if (
+        queried_physical !=
+        user_physical
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] address space mapping mismatch\n"
+        );
+
+        serial_write(
+            "[fail] address space mapping mismatch\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_write(
+        "[ ok ] address space mapping verified\n"
+    );
+
+    serial_write(
+        "[ ok ] address space mapping verified\n"
+    );
+
+
+    /*
+     * Save kernel CR3.
+     */
+    uint32_t kernel_cr3 =
+        address_space_get_current_cr3();
+
+
+    /*
+     * Switch to address space.
+     */
+    if (
+        !address_space_switch(
+            test_space
+        )
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] address_space_switch\n"
+        );
+
+        serial_write(
+            "[fail] address_space_switch\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    if (
+        address_space_get_current_cr3() !=
+        test_space->page_directory_physical
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] CR3 switch verification\n"
+        );
+
+        serial_write(
+            "[fail] CR3 switch verification\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_set_color(
+        VGA_LGREEN,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[ ok ] address space switched\n"
+    );
+
+    serial_write(
+        "[ ok ] address space switched\n"
+    );
+
+
+    /*
+     * Access mapped user virtual address from CPL0.
+     */
+    volatile uint32_t *user_memory =
+        (volatile uint32_t *)(
+            uintptr_t
+        )ADDRESS_SPACE_TEST_VIRTUAL;
+
+
+    *user_memory =
+        0x11223344U;
+
+
+    if (
+        *user_memory !=
+        0x11223344U
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] address space virtual access\n"
+        );
+
+        serial_write(
+            "[fail] address space virtual access\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_write(
+        "[ ok ] address space virtual access\n"
+    );
+
+    serial_write(
+        "[ ok ] address space virtual access\n"
+    );
+
+
+    /*
+     * Unmap.
+     */
+    if (
+        !address_space_unmap_page(
+            test_space,
+            ADDRESS_SPACE_TEST_VIRTUAL
+        )
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] address_space_unmap_page\n"
+        );
+
+        serial_write(
+            "[fail] address_space_unmap_page\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_write(
+        "[ ok ] user page unmapped\n"
+    );
+
+    serial_write(
+        "[ ok ] user page unmapped\n"
+    );
+
+
+    /*
+     * Restore kernel CR3.
+     */
+    if (
+        address_space_get_current_cr3() !=
+        kernel_cr3
+    ) {
+
+        __asm__ volatile (
+            "mov %0, %%cr3"
+            :
+            : "r"(kernel_cr3)
+            : "memory"
+        );
+    }
+
+
+    if (
+        address_space_get_current_cr3() !=
+        kernel_cr3
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] kernel CR3 restore\n"
+        );
+
+        serial_write(
+            "[fail] kernel CR3 restore\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_set_color(
+        VGA_LGREEN,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[ ok ] kernel address space restored\n"
+    );
+
+    serial_write(
+        "[ ok ] kernel address space restored\n"
+    );
+
+
+    /*
+     * Release physical test page.
+     */
+    pmm_free_page(
+        user_physical
+    );
+
+
+    console_write(
+        "[ ok ] user physical page released\n"
+    );
+
+    serial_write(
+        "[ ok ] user physical page released\n"
+    );
+
+
+    /*
+     * Destroy address space.
+     */
+    if (
+        !address_space_destroy(
+            test_space
+        )
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] address_space_destroy\n"
+        );
+
+        serial_write(
+            "[fail] address_space_destroy\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_set_color(
+        VGA_LGREEN,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[ ok ] address space destroyed\n"
+    );
+
+    serial_write(
+        "[ ok ] address space destroyed\n"
+    );
+
+
+    console_write(
+        "[ ok ] address space subsystem test passed\n"
+    );
+
+    serial_write(
+        "[ ok ] address space subsystem test passed\n"
+    );
+
+
+    /*
+     * ==================================================
+     * Task subsystem
+     * ==================================================
+     *
+     * IMPORTANT:
+     *
+     * Interrupts are still disabled here.
+     *
+     * We deliberately test cooperative context switching
+     * independently from PIT/preemption.
+     */
+    console_set_color(
+        VGA_YELLOW,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[test] initializing task subsystem\n"
+    );
+
+    serial_write(
+        "[test] initializing task subsystem\n"
+    );
+
+
+    if (
+        !task_init()
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] task initialization\n"
+        );
+
+        serial_write(
+            "[fail] task initialization\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_set_color(
+        VGA_LGREEN,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[ ok ] task subsystem initialized\n"
+    );
+
+    serial_write(
+        "[ ok ] task subsystem initialized\n"
+    );
+
+
+    /*
+     * ==================================================
+     * Create task A
+     * ==================================================
+     */
+    uint32_t task_a_id =
+        task_create(
+            task_a_entry,
+            0
+        );
+
+
+    if (
+        task_a_id == 0
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] task A creation\n"
+        );
+
+        serial_write(
+            "[fail] task A creation\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    /*
+     * ==================================================
+     * Create task B
+     * ==================================================
+     */
+    uint32_t task_b_id =
+        task_create(
+            task_b_entry,
+            0
+        );
+
+
+    if (
+        task_b_id == 0
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] task B creation\n"
+        );
+
+        serial_write(
+            "[fail] task B creation\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    console_set_color(
+        VGA_LGREEN,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[ ok ] task A created\n"
+    );
+
+    console_write(
+        "[ ok ] task B created\n"
+    );
+
+
+    serial_write(
+        "[ ok ] task A created\n"
+    );
+
+    serial_write(
+        "[ ok ] task B created\n"
+    );
+
+
+    /*
+     * ==================================================
+     * Start cooperative scheduler
+     * ==================================================
+     */
+    console_set_color(
+        VGA_YELLOW,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[test] starting cooperative scheduler\n"
+    );
+
+    serial_write(
+        "[test] starting cooperative scheduler\n"
+    );
+
+
+    /*
+     * This function transfers control to task A.
+     *
+     * The task test will eventually halt the CPU after
+     * both tasks have returned.
+     */
+    if (
+        !task_start()
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] task scheduler start\n"
+        );
+
+        serial_write(
+            "[fail] task scheduler start\n"
+        );
+
+        halt_cpu();
+    }
+
+
+    /*
+     * Normally never reached in this prototype because
+     * the final DEAD task halts the CPU.
+     */
+    console_set_color(
+        VGA_LRED,
+        VGA_BLACK
+    );
+
+    console_write(
+        "[fail] scheduler returned unexpectedly\n"
+    );
+
+    serial_write(
+        "[fail] scheduler returned unexpectedly\n"
+    );
+
+    halt_cpu();
+
+
+    /*
+     * ==================================================
      * Enable interrupts
      * ==================================================
+     *
+     * This point will only matter after task scheduling
+     * is converted into a preemptive model.
      */
     console_set_color(
         VGA_YELLOW,
@@ -1705,19 +2795,22 @@ void kmain(
             );
 
 
-        if (length > 0) {
+        if (
+            length > 0
+        ) {
 
             /*
              * Page Fault test command.
              *
              * Type:
              *
-             *   pf
-             *
-             * This intentionally accesses an unmapped
-             * virtual address.
+             *     pf
              */
-            if (command_is_pf(command)) {
+            if (
+                command_is_pf(
+                    command
+                )
+            ) {
 
                 console_set_color(
                     VGA_YELLOW,
@@ -1728,29 +2821,24 @@ void kmain(
                     "\n[test] triggering page fault\n"
                 );
 
-
                 serial_write(
                     "\n[test] triggering page fault\n"
                 );
 
 
                 /*
-                 * Intentional Page Fault.
+                 * Intentional page fault.
                  */
                 volatile uint32_t *bad =
                     (volatile uint32_t *)(
-                        uintptr_t)
-                        PAGE_FAULT_TEST_ADDRESS;
+                        uintptr_t
+                    )PAGE_FAULT_TEST_ADDRESS;
 
 
                 uint32_t value =
                     *bad;
 
 
-                /*
-                 * Prevent compiler from removing
-                 * the access.
-                 */
                 (void)value;
             }
 

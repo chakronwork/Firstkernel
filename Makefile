@@ -29,6 +29,10 @@ OBJS := \
     kernel/kmalloc.o \
     kernel/paging.o \
     kernel/page_fault.o \
+    kernel/vmm.o \
+    kernel/address_space.o \
+    kernel/task.o \
+    kernel/task_asm.o \
     kernel/kmain.o \
     kernel/vga.o
 
@@ -90,6 +94,22 @@ kernel/paging.o: kernel/paging.c
 
 kernel/page_fault.o: kernel/page_fault.c
 	$(CC) $(CFLAGS) -c $< -o $@
+
+
+kernel/vmm.o: kernel/vmm.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+
+kernel/address_space.o: kernel/address_space.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+
+kernel/task.o: kernel/task.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+
+kernel/task_asm.o: kernel/task_asm.s
+	$(AS) $(CFLAGS) -c $< -o $@
 
 
 kernel/kmain.o: kernel/kmain.c
