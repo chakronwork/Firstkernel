@@ -578,11 +578,17 @@ uint32_t task_create(
 
     /*
      * Allocate kernel stack.
+     *
+     * Do this before creating the address space so a
+     * failed stack allocation cannot leak an address space.
      */
     uint8_t *stack =
         (uint8_t *)kmalloc(
             TASK_STACK_SIZE
         );
+
+    if (stack == 0)
+        return 0;
 
     /*
      * Every task owns an address space.
@@ -594,10 +600,6 @@ uint32_t task_create(
         kfree(stack);
         return 0;
     }
-
-
-    if (stack == 0)
-        return 0;
 
 
     /*
@@ -863,6 +865,38 @@ uint32_t task_create_user(
  *
  * The current task is therefore never reaped by this pass.
  */
+static uint32_t reuse_test_triggered =
+    0;
+
+/*
+ * Expected slot that must be reused by the replacement task.
+ */
+static struct task *reuse_test_slot =
+    0;
+
+/*
+ * Replacement task ID.
+ */
+static uint32_t reuse_test_task_id =
+    0;
+
+/*
+ * Free-page count before replacement task creation.
+ */
+static uint32_t reuse_test_baseline_free_pages =
+    0;
+
+/*
+ * Lifecycle verification result.
+ */
+static uint32_t reuse_test_failed =
+    0;
+
+/*
+ * Internal regression-test helper.
+ */
+static uint32_t task_reuse_test(void);
+
 static void reap_dead_tasks(void)
 {
     for (
@@ -996,6 +1030,15 @@ static void reap_dead_tasks(void)
             0;
 
         /*
+         * Preserve identity for lifecycle verification.
+         */
+        uint32_t reaped_task_id =
+            task->id;
+
+        struct task *reaped_task_slot =
+            task;
+
+        /*
          * Clear execution metadata.
          */
         task->id =
@@ -1034,6 +1077,77 @@ static void reap_dead_tasks(void)
         serial_write(
             "[reaper] task resources reclaimed\n"
         );
+
+        /*
+         * Run the lifecycle regression test once.
+         *
+         * The dead task has now been fully reclaimed and
+         * its slot is TASK_UNUSED.
+         */
+        if (
+            reuse_test_triggered == 0
+        ) {
+            reuse_test_triggered =
+                1;
+
+            reuse_test_slot =
+                reaped_task_slot;
+
+            task_reuse_test();
+        }
+        else if (
+            reuse_test_task_id != 0 &&
+            reaped_task_id ==
+            reuse_test_task_id
+        ) {
+            /*
+             * The replacement task reached TASK_DEAD and
+             * has now been fully reclaimed.
+             *
+             * Verify the task accounting returned to the
+             * pre-create state.
+             */
+            if (
+                total_tasks != 4U
+            ) {
+                serial_write(
+                    "[reuse-test] FAIL: total_tasks did not recover\n"
+                );
+
+                reuse_test_failed =
+                    1;
+            }
+            else {
+                serial_write(
+                    "[reuse-test] OK: total_tasks recovered\n"
+                );
+            }
+
+            if (
+                pmm_get_free_pages() !=
+                reuse_test_baseline_free_pages
+            ) {
+                serial_write(
+                    "[reuse-test] FAIL: free_pages did not recover\n"
+                );
+
+                reuse_test_failed =
+                    1;
+            }
+            else {
+                serial_write(
+                    "[reuse-test] OK: free_pages recovered\n"
+                );
+            }
+
+            if (
+                reuse_test_failed == 0
+            ) {
+                serial_write(
+                    "[reuse-test] PASS: lifecycle verification\n"
+                );
+            }
+        }
     }
 }
 
@@ -1739,6 +1853,157 @@ int task_start(void)
  * Task count
  * ============================================================
  */
+
+/*
+ * ============================================================
+ * Task reuse regression test
+ * ============================================================
+ */
+
+static void task_reuse_test_entry(
+    void *arg
+)
+{
+    (void)arg;
+
+    serial_write(
+        "[reuse-test] replacement task running\n"
+    );
+
+    /*
+     * Returning marks this task TASK_DEAD.
+     * The normal reaper path will reclaim it later.
+     */
+}
+
+
+static uint32_t task_reuse_test(void)
+{
+    uint32_t before_count =
+        total_tasks;
+
+    reuse_test_baseline_free_pages =
+        pmm_get_free_pages();
+
+    serial_write(
+        "[reuse-test] before total_tasks="
+    );
+
+    serial_write_dec(
+        before_count
+    );
+
+    serial_write(
+        " free_pages="
+    );
+
+    serial_write_dec(
+        reuse_test_baseline_free_pages
+    );
+
+    serial_write(
+        "\n"
+    );
+
+    uint32_t task_id =
+        task_create(
+            task_reuse_test_entry,
+            0
+        );
+
+    if (task_id == 0) {
+        serial_write(
+            "[reuse-test] FAIL: replacement task creation\n"
+        );
+
+        reuse_test_failed =
+            1;
+
+        return 0;
+    }
+
+    reuse_test_task_id =
+        task_id;
+
+    /*
+     * Verify that find_free_task() reused exactly the slot
+     * that the reaper just returned to TASK_UNUSED.
+     */
+    struct task *replacement =
+        task_get(
+            task_id
+        );
+
+    if (
+        replacement !=
+        reuse_test_slot
+    ) {
+        serial_write(
+            "[reuse-test] FAIL: task slot was not reused\n"
+        );
+
+        reuse_test_failed =
+            1;
+    }
+    else {
+        serial_write(
+            "[reuse-test] OK: task slot reused\n"
+        );
+    }
+
+    serial_write(
+        "[reuse-test] replacement task id="
+    );
+
+    serial_write_dec(
+        task_id
+    );
+
+    serial_write(
+        "\n"
+    );
+
+    serial_write(
+        "[reuse-test] after total_tasks="
+    );
+
+    serial_write_dec(
+        total_tasks
+    );
+
+    serial_write(
+        " free_pages="
+    );
+
+    serial_write_dec(
+        pmm_get_free_pages()
+    );
+
+    serial_write(
+        "\n"
+    );
+
+    if (
+        total_tasks !=
+        before_count + 1U
+    ) {
+        serial_write(
+            "[reuse-test] FAIL: total_tasks create accounting\n"
+        );
+
+        reuse_test_failed =
+            1;
+    }
+    else {
+        serial_write(
+            "[reuse-test] OK: total_tasks create accounting\n"
+        );
+    }
+
+    return task_id;
+}
+
+
 uint32_t task_count(void)
 {
     return total_tasks;

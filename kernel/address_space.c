@@ -381,6 +381,15 @@ int address_space_map_page(
 
     uint32_t *page_table;
 
+    /*
+     * Track whether this call created a new page table.
+     *
+     * If a later validation fails, the newly allocated
+     * page-table page must be rolled back.
+     */
+    int created_page_table =
+        0;
+
 
     /*
      * ==================================================
@@ -418,6 +427,9 @@ int address_space_map_page(
 
         space->owned_page_tables++;
 
+        created_page_table =
+            1;
+
 
         pde =
             space->page_directory[
@@ -443,6 +455,34 @@ int address_space_map_page(
             table_index
         ] & PAGE_PRESENT
     ) {
+        /*
+         * Normally a freshly created page table is empty,
+         * so this case is defensive. If this call created
+         * the table, roll it back completely.
+         */
+        if (
+            created_page_table != 0
+        ) {
+            uint32_t table_physical =
+                pde &
+                PAGE_ADDRESS_MASK;
+
+            space->page_directory[
+                directory_index
+            ] =
+                0;
+
+            if (
+                space->owned_page_tables > 0
+            ) {
+                space->owned_page_tables--;
+            }
+
+            pmm_free_page(
+                table_physical
+            );
+        }
+
         return 0;
     }
 

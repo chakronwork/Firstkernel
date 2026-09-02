@@ -113,13 +113,17 @@ static int setup_user_task(
     uint32_t code_page =
         pmm_alloc_page();
 
+    if (code_page == 0)
+        return 0;
+
     uint32_t stack_page =
         pmm_alloc_page();
 
-    if (
-        code_page == 0 ||
-        stack_page == 0
-    ) {
+    if (stack_page == 0) {
+        pmm_free_page(
+            code_page
+        );
+
         return 0;
     }
 
@@ -133,6 +137,14 @@ static int setup_user_task(
             PAGE_USER
         )
     ) {
+        pmm_free_page(
+            code_page
+        );
+
+        pmm_free_page(
+            stack_page
+        );
+
         return 0;
     }
 
@@ -146,6 +158,23 @@ static int setup_user_task(
             PAGE_USER
         )
     ) {
+        /*
+         * The code mapping succeeded, so remove it before
+         * returning both physical pages to the PMM.
+         */
+        address_space_unmap_page(
+            task->address_space,
+            code_va
+        );
+
+        pmm_free_page(
+            code_page
+        );
+
+        pmm_free_page(
+            stack_page
+        );
+
         return 0;
     }
 

@@ -156,5 +156,4 @@ struct registers *task_scheduler_tick(
 
 uint32_t task_count(void);
 
-
 #endif /* FIRSTOS_TASK_H */
