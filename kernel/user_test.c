@@ -132,8 +132,16 @@ static int setup_user_task(
             task->address_space,
             code_va,
             code_page,
+            /*
+             * Code is written by the kernel through the
+             * identity-mapped physical address below, never
+             * through this user virtual mapping, so the user
+             * mapping does not need PAGE_WRITABLE. Keeping the
+             * code page read+execute only (no write) prevents a
+             * compromised Ring 3 task from self-modifying its
+             * own instructions (W^X).
+             */
             PAGE_PRESENT |
-            PAGE_WRITABLE |
             PAGE_USER
         )
     ) {
