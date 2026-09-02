@@ -15,7 +15,7 @@ struct gdt_ptr {
     uint32_t base;
 } __attribute__((packed));
 
-static struct gdt_entry gdt[5];
+static struct gdt_entry gdt[3];
 static struct gdt_ptr gp;
 
 extern void gdt_flush(uint32_t);
@@ -42,82 +42,9 @@ void gdt_init(void) {
     gp.limit = sizeof(gdt) - 1;
     gp.base = (uint32_t)&gdt;
 
-    /*
-     * Null descriptor.
-     */
-    gdt_set_gate(
-        0,
-        0,
-        0,
-        0,
-        0
-    );
-
-
-    /*
-     * Kernel code:
-     *
-     * Present
-     * Ring 0
-     * Code
-     * Readable
-     */
-    gdt_set_gate(
-        1,
-        0,
-        0xFFFFFFFF,
-        0x9A,
-        0xCF
-    );
-
-
-    /*
-     * Kernel data:
-     *
-     * Present
-     * Ring 0
-     * Writable
-     */
-    gdt_set_gate(
-        2,
-        0,
-        0xFFFFFFFF,
-        0x92,
-        0xCF
-    );
-
-
-    /*
-     * User code:
-     *
-     * Present
-     * Ring 3
-     * Code
-     * Readable
-     */
-    gdt_set_gate(
-        3,
-        0,
-        0xFFFFFFFF,
-        0xFA,
-        0xCF
-    );
-
-
-    /*
-     * User data:
-     *
-     * Present
-     * Ring 3
-     * Writable
-     */
-    gdt_set_gate(
-        4,
-        0,
-        0xFFFFFFFF,
-        0xF2,
-        0xCF
-    );
+    gdt_set_gate(0, 0, 0, 0, 0);
+    gdt_set_gate(1, 0, 0xFFFFFFFF, 0x9A, 0xCF);
+    gdt_set_gate(2, 0, 0xFFFFFFFF, 0x92, 0xCF);
 
     gdt_flush((uint32_t)&gp);
 }
