@@ -31,14 +31,36 @@
  *
  * PIT IRQ0 must preempt this task.
  */
+static const char user_message_a[] =
+    "Hello from Ring 3 via SYS_WRITE!\n";
+
+/*
+ * User task A:
+ *
+ *     mov eax, SYS_WRITE
+ *     mov ebx, USER_STACK_A + 0x100
+ *     mov ecx, sizeof(user_message_a) - 1
+ *     int 0x80
+ *     jmp $
+ */
 static const uint8_t user_code_a[] = {
-    /*
-     * mov eax, 1
-     * int 0x80
-     * jmp $
-     */
+    /* mov eax, 1 */
     0xB8, 0x01, 0x00, 0x00, 0x00,
+
+    /* mov ebx, 0x40001100 */
+    0xBB, 0x00, 0x11, 0x00, 0x40,
+
+    /* mov ecx, message length */
+    0xB9,
+    (uint8_t)((sizeof(user_message_a) - 1U) & 0xFFU),
+    (uint8_t)(((sizeof(user_message_a) - 1U) >> 8) & 0xFFU),
+    (uint8_t)(((sizeof(user_message_a) - 1U) >> 16) & 0xFFU),
+    (uint8_t)(((sizeof(user_message_a) - 1U) >> 24) & 0xFFU),
+
+    /* int 0x80 */
     0xCD, 0x80,
+
+    /* jmp $ */
     0xEB, 0xFE
 };
 
@@ -122,6 +144,28 @@ static int setup_user_task(
         dst[i] =
             code[i];
     }
+
+
+    /*
+     * Put the SYS_WRITE message into the mapped user
+     * stack page. The message is accessed later through
+     * its user virtual address.
+     */
+    if (task_name == 'A') {
+
+        uint8_t *user_page =
+            (uint8_t *)(uintptr_t)stack_page;
+
+        for (
+            uint32_t i = 0;
+            i < sizeof(user_message_a) - 1U;
+            ++i
+        ) {
+            user_page[0x100U + i] =
+                (uint8_t)user_message_a[i];
+        }
+    }
+
 
     task->user_stack_physical =
         stack_page;

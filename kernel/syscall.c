@@ -3,6 +3,9 @@
 #include "syscall.h"
 #include "serial.h"
 #include "task.h"
+#include "uaccess.h"
+
+#define SYSCALL_WRITE_MAX 256U
 
 struct registers *syscall_dispatch(
     struct registers *regs
@@ -14,32 +17,83 @@ struct registers *syscall_dispatch(
     switch (regs->eax) {
 
         case SYS_WRITE:
+        {
+            uint32_t user_buffer =
+                regs->ebx;
 
-            serial_write(
-                "[syscall] SYS_WRITE from Ring 3\n"
-            );
+            uint32_t length =
+                regs->ecx;
+
+            uint8_t buffer[
+                SYSCALL_WRITE_MAX
+            ];
 
             /*
-             * Return value:
-             *
-             * EAX = 0
-             *
-             * Real user-buffer handling will be added
-             * after user-pointer validation exists.
+             * Prevent an oversized userspace request
+             * from consuming excessive kernel stack.
              */
-            regs->eax = 0;
+            if (
+                length == 0U ||
+                length > SYSCALL_WRITE_MAX
+            ) {
+                regs->eax =
+                    (uint32_t)-1;
+
+                return regs;
+            }
+
+            /*
+             * Only a Ring 3 task may use the user
+             * memory syscall interface.
+             */
+            if (
+                (regs->cs & 0x3U) != 0x3U
+            ) {
+                regs->eax =
+                    (uint32_t)-1;
+
+                return regs;
+            }
+
+            if (
+                !copy_from_user(
+                    buffer,
+                    user_buffer,
+                    length
+                )
+            ) {
+                serial_write(
+                    "[syscall] SYS_WRITE invalid user range\n"
+                );
+
+                regs->eax =
+                    (uint32_t)-1;
+
+                return regs;
+            }
+
+            for (
+                uint32_t i = 0;
+                i < length;
+                ++i
+            ) {
+                serial_putc(
+                    (char)buffer[i]
+                );
+            }
+
+            /*
+             * Return number of bytes written.
+             */
+            regs->eax =
+                length;
 
             return regs;
+        }
 
 
         case SYS_YIELD:
 
-            /*
-             * Reuse the existing scheduler path.
-             *
-             * This may return another task's saved
-             * interrupt frame.
-             */
             return task_scheduler_tick(
                 regs
             );
@@ -47,10 +101,8 @@ struct registers *syscall_dispatch(
 
         default:
 
-            /*
-             * Unknown syscall.
-             */
-            regs->eax = (uint32_t)-1;
+            regs->eax =
+                (uint32_t)-1;
 
             return regs;
     }

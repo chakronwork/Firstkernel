@@ -34,6 +34,7 @@ OBJS := \
     kernel/task.o \
     kernel/task_asm.o \
     kernel/syscall.o \
+    kernel/uaccess.o \
     kernel/user_test.o \
     kernel/user_mode.o \
     kernel/kmain.o \
@@ -115,6 +116,10 @@ kernel/task_asm.o: kernel/task_asm.s
 	$(AS) $(CFLAGS) -c $< -o $@
 
 kernel/syscall.o: kernel/syscall.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+
+kernel/uaccess.o: kernel/uaccess.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 
