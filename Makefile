@@ -33,6 +33,7 @@ OBJS := \
     kernel/address_space.o \
     kernel/task.o \
     kernel/task_asm.o \
+    kernel/syscall.o \
     kernel/user_test.o \
     kernel/user_mode.o \
     kernel/kmain.o \
@@ -112,6 +113,10 @@ kernel/task.o: kernel/task.c
 
 kernel/task_asm.o: kernel/task_asm.s
 	$(AS) $(CFLAGS) -c $< -o $@
+
+kernel/syscall.o: kernel/syscall.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
 
 kernel/user_test.o: kernel/user_test.c
 	$(CC) $(CFLAGS) -c $< -o $@

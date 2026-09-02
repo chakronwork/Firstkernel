@@ -230,4 +230,16 @@ ISR_NOERR 33
 ISR_NOERR 48
 
 
+/*
+ * ============================================================
+ * System call interrupt
+ * ============================================================
+ *
+ * int 0x80
+ *
+ * Vector 128
+ */
+ISR_NOERR 128
+
+
 .section .note.GNU-stack,"",@progbits

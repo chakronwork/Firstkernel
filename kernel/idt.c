@@ -8,6 +8,7 @@
 #include "console.h"
 #include "serial.h"
 #include "task.h"
+#include "syscall.h"
 
 
 /*
@@ -110,6 +111,7 @@ extern void isr33(void);
  * int 0x30
  */
 extern void isr48(void);
+extern void isr128(void);
 
 
 /*
@@ -456,6 +458,25 @@ struct registers *isr_handler(
 
         return
             task_scheduler_tick(
+                regs
+            );
+    }
+
+
+    /*
+     * ========================================================
+     * System calls
+     * ========================================================
+     *
+     * int 0x80
+     *
+     * User mode is allowed to invoke this vector.
+     */
+    if (
+        regs->int_no == 128U
+    ) {
+        return
+            syscall_dispatch(
                 regs
             );
     }
@@ -826,6 +847,23 @@ void idt_init(void)
     idt_set_gate(
         48,
         (uint32_t)isr48,
+        0x08,
+        0xEE
+    );
+
+
+    /*
+     * ========================================================
+     * System call gate
+     *
+     * int 0x80
+     *
+     * DPL = 3 so Ring 3 code may invoke it.
+     * ========================================================
+     */
+    idt_set_gate(
+        128,
+        (uint32_t)isr128,
         0x08,
         0xEE
     );

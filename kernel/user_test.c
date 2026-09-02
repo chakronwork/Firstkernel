@@ -32,6 +32,13 @@
  * PIT IRQ0 must preempt this task.
  */
 static const uint8_t user_code_a[] = {
+    /*
+     * mov eax, 1
+     * int 0x80
+     * jmp $
+     */
+    0xB8, 0x01, 0x00, 0x00, 0x00,
+    0xCD, 0x80,
     0xEB, 0xFE
 };
 
