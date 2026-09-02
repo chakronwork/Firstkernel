@@ -76,24 +76,6 @@ int task_switch(
 void task_yield(void);
 
 
-/*
- * Block the current task for a number of PIT ticks.
- *
- * ticks == 0 performs a normal yield.
- */
-void task_sleep(
-    uint32_t ticks
-);
-
-
-/*
- * Wake a blocked task immediately.
- */
-void task_wake(
-    struct task *task
-);
-
-
 int task_start(void);
 
 

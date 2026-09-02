@@ -5,7 +5,6 @@
 #include "idt.h"
 
 
-#include "timer.h"
 /*
  * ============================================================
  * External assembly
@@ -152,10 +151,7 @@ int task_init(void)
         tasks[i].state =
             TASK_UNUSED;
 
-        
-        tasks[i].wake_tick =
-            0;
-tasks[i].context.esp =
+        tasks[i].context.esp =
             0;
 
         tasks[i].stack =
@@ -454,10 +450,7 @@ uint32_t task_create(
     task->state =
         TASK_READY;
 
-    
-    task->wake_tick =
-        0;
-task->stack =
+    task->stack =
         stack;
 
     task->stack_size =
@@ -666,127 +659,10 @@ static struct task *find_next_task(void)
  *
  * Returns the interrupt frame that must be restored.
  */
-
-/*
- * ============================================================
- * Wake blocked task
- * ============================================================
- */
-void task_wake(
-    struct task *task
-)
-{
-    if (task == 0)
-        return;
-
-    if (
-        task->state !=
-        TASK_BLOCKED
-    ) {
-        return;
-    }
-
-    task->wake_tick =
-        0;
-
-    task->state =
-        TASK_READY;
-}
-
-
-/*
- * ============================================================
- * Sleep current task
- * ============================================================
- */
-void task_sleep(
-    uint32_t ticks
-)
-{
-    if (current_task == 0)
-        return;
-
-    /*
-     * Zero ticks means normal voluntary yield.
-     */
-    if (ticks == 0U) {
-        task_yield();
-        return;
-    }
-
-    /*
-     * Set absolute wakeup tick.
-     */
-    current_task->wake_tick =
-        timer_get_ticks() +
-        ticks;
-
-    /*
-     * Block current task.
-     */
-    current_task->state =
-        TASK_BLOCKED;
-
-    /*
-     * Enter scheduler.
-     */
-    task_yield();
-}
-
-
-/*
- * ============================================================
- * Wake expired blocked tasks
- * ============================================================
- */
-static void wake_expired_tasks(
-    uint32_t current_tick
-)
-{
-    for (
-        uint32_t i = 0;
-        i < TASK_MAX;
-        ++i
-    ) {
-
-        if (
-            tasks[i].state !=
-            TASK_BLOCKED
-        ) {
-            continue;
-        }
-
-        if (
-            tasks[i].wake_tick <=
-            current_tick
-        ) {
-
-            task_wake(
-                &tasks[i]
-            );
-        }
-    }
-}
-
-
-/*
- * ============================================================
- * Scheduler tick
- * ============================================================
- */
-
 struct registers *task_scheduler_tick(
     struct registers *regs
 )
 {
-
-    /*
-     * Wake tasks whose sleep interval has expired.
-     */
-    wake_expired_tasks(
-        timer_get_ticks()
-    );
-
     if (regs == 0)
         return regs;
 

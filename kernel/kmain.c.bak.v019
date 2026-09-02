@@ -451,20 +451,6 @@ static void task_a_entry(
 
             return;
         }
-
-
-        serial_write(
-            "[task A] sleeping for 25 ticks\n"
-        );
-
-        console_write(
-            "[A:sleep 25] "
-        );
-
-
-        task_sleep(
-            25U
-        );
     }
 }
 
@@ -529,20 +515,6 @@ static void task_b_entry(
 
             return;
         }
-
-
-        serial_write(
-            "[task B] sleeping for 40 ticks\n"
-        );
-
-        console_write(
-            "[B:sleep 40] "
-        );
-
-
-        task_sleep(
-            40U
-        );
     }
 }
 
@@ -628,7 +600,7 @@ void kmain(
     );
 
     console_write(
-        "firstOS v0.0.19\n"
+        "firstOS v0.0.18\n"
     );
 
 
@@ -2839,11 +2811,11 @@ void kmain(
     );
 
     console_write(
-        "[test] starting sleep/block/wakeup scheduler\n"
+        "[test] starting preemptive scheduler\n"
     );
 
     serial_write(
-        "[test] starting sleep/block/wakeup scheduler\n"
+        "[test] starting preemptive scheduler\n"
     );
 
 
