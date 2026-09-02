@@ -395,6 +395,14 @@ static int heap_stress_test(void)
  * ============================================================
  * Task A
  * ============================================================
+ *
+ * Preemptive scheduler test.
+ *
+ * IMPORTANT:
+ *
+ * This task does NOT call task_yield().
+ *
+ * It must be interrupted by PIT IRQ0.
  */
 static void task_a_entry(
     void *arg
@@ -418,14 +426,31 @@ static void task_a_entry(
         );
 
 
-        if (
-            task_a_runs >= 5U
+        /*
+         * Deliberately consume CPU time.
+         *
+         * There is NO task_yield() here.
+         *
+         * The PIT timer must preempt this task.
+         */
+        for (
+            volatile uint32_t i = 0;
+            i < 2000000U;
+            ++i
         ) {
-            return;
+
+            __asm__ volatile (
+                "pause"
+            );
         }
 
 
-        task_yield();
+        if (
+            task_a_runs >= 5U
+        ) {
+
+            return;
+        }
     }
 }
 
@@ -434,6 +459,14 @@ static void task_a_entry(
  * ============================================================
  * Task B
  * ============================================================
+ *
+ * Preemptive scheduler test.
+ *
+ * IMPORTANT:
+ *
+ * This task does NOT call task_yield().
+ *
+ * It must be interrupted by PIT IRQ0.
  */
 static void task_b_entry(
     void *arg
@@ -457,16 +490,71 @@ static void task_b_entry(
         );
 
 
-        if (
-            task_b_runs >= 5U
+        /*
+         * Deliberately consume CPU time.
+         *
+         * There is NO task_yield() here.
+         *
+         * The PIT timer must preempt this task.
+         */
+        for (
+            volatile uint32_t i = 0;
+            i < 2000000U;
+            ++i
         ) {
-            return;
+
+            __asm__ volatile (
+                "pause"
+            );
         }
 
 
-        task_yield();
+        if (
+            task_b_runs >= 5U
+        ) {
+
+            return;
+        }
     }
 }
+
+
+/*
+ * ============================================================
+ * Idle Task
+ * ============================================================
+ *
+ * Runs whenever no normal task is READY.
+ *
+ * The task never returns.
+ */
+static void task_idle_entry(
+    void *arg
+)
+{
+    (void)arg;
+
+    for (;;) {
+
+        /*
+         * Keep hardware interrupts enabled.
+         */
+        __asm__ volatile (
+            "sti"
+        );
+
+        /*
+         * Wait until the next interrupt.
+         *
+         * PIT IRQ0 can wake the CPU and the scheduler
+         * can switch to another READY task.
+         */
+        __asm__ volatile (
+            "hlt"
+        );
+    }
+}
+
 
 
 /*
@@ -512,7 +600,7 @@ void kmain(
     );
 
     console_write(
-        "firstOS v0.0.17\n"
+        "firstOS v0.0.18\n"
     );
 
 
@@ -2526,12 +2614,12 @@ void kmain(
      * Task subsystem
      * ==================================================
      *
-     * IMPORTANT:
+     * Interrupts remain disabled while tasks are created.
      *
-     * Interrupts are still disabled here.
+     * task_start() transfers control to the first task
+     * using the interrupt-frame context.
      *
-     * We deliberately test cooperative context switching
-     * independently from PIT/preemption.
+     * PIT IRQ0 provides preemptive scheduling.
      */
     console_set_color(
         VGA_YELLOW,
@@ -2653,12 +2741,49 @@ void kmain(
         VGA_BLACK
     );
 
+
+    /*
+     * ==================================================
+     * Create idle task
+     * ==================================================
+     */
+    uint32_t task_idle_id =
+        task_create(
+            task_idle_entry,
+            0
+        );
+
+    if (
+        task_idle_id == 0
+    ) {
+
+        console_set_color(
+            VGA_LRED,
+            VGA_BLACK
+        );
+
+        console_write(
+            "[fail] idle task creation\n"
+        );
+
+        serial_write(
+            "[fail] idle task creation\n"
+        );
+
+        halt_cpu();
+    }
+
+
     console_write(
         "[ ok ] task A created\n"
     );
 
     console_write(
         "[ ok ] task B created\n"
+    );
+
+    console_write(
+        "[ ok ] idle task created\n"
     );
 
 
@@ -2668,6 +2793,10 @@ void kmain(
 
     serial_write(
         "[ ok ] task B created\n"
+    );
+
+    serial_write(
+        "[ ok ] idle task created\n"
     );
 
 
@@ -2682,11 +2811,11 @@ void kmain(
     );
 
     console_write(
-        "[test] starting cooperative scheduler\n"
+        "[test] starting preemptive scheduler\n"
     );
 
     serial_write(
-        "[test] starting cooperative scheduler\n"
+        "[test] starting preemptive scheduler\n"
     );
 
 

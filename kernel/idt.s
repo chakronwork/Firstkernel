@@ -1,10 +1,16 @@
 .section .text
 
 
+/*
+ * ============================================================
+ * IDT flush
+ * ============================================================
+ */
 .global idt_flush
 .type idt_flush, @function
 
 idt_flush:
+
     mov 4(%esp), %eax
     lidt (%eax)
     ret
@@ -46,15 +52,20 @@ idt_flush:
 
 isr_common:
 
+    /*
+     * Save all general purpose registers.
+     */
     pusha
+
 
     /*
      * Clear direction flag.
      */
     cld
 
+
     /*
-     * Pass pointer to registers structure.
+     * Pass pointer to interrupt frame.
      */
     push %esp
 
@@ -62,10 +73,36 @@ isr_common:
 
     add $4, %esp
 
+
+    /*
+     * EAX contains the frame to restore.
+     *
+     * It may be:
+     *
+     *   current task
+     *
+     * or
+     *
+     *   another task
+     */
+    test %eax, %eax
+
+    jz .restore_current
+
+
+    /*
+     * Switch to returned frame.
+     */
+    mov %eax, %esp
+
+
+.restore_current:
+
     /*
      * Restore registers.
      */
     popa
+
 
     /*
      * Remove:
@@ -74,6 +111,7 @@ isr_common:
      *   err_code
      */
     add $8, %esp
+
 
     /*
      * Return from interrupt.
@@ -87,11 +125,6 @@ isr_common:
  * ============================================================
  * ISR without CPU error code
  * ============================================================
- *
- * We push:
- *
- *   fake error code = 0
- *   interrupt number
  */
 .macro ISR_NOERR n
 
@@ -110,16 +143,8 @@ isr\n:
 
 /*
  * ============================================================
- * ISR with CPU-provided error code
+ * ISR with CPU error code
  * ============================================================
- *
- * CPU already pushed:
- *
- *   error code
- *
- * We push only:
- *
- *   interrupt number
  */
 .macro ISR_ERR n
 
@@ -137,7 +162,7 @@ isr\n:
 
 /*
  * ============================================================
- * CPU Exceptions 0-31
+ * CPU exceptions
  * ============================================================
  */
 
@@ -187,12 +212,22 @@ ISR_NOERR 31
  * ============================================================
  * Hardware IRQs
  * ============================================================
- *
- * IRQ0 -> vector 32
- * IRQ1 -> vector 33
  */
+
 ISR_NOERR 32
 ISR_NOERR 33
+
+
+/*
+ * ============================================================
+ * Software scheduler interrupt
+ * ============================================================
+ *
+ * int 0x30
+ *
+ * Vector 48
+ */
+ISR_NOERR 48
 
 
 .section .note.GNU-stack,"",@progbits

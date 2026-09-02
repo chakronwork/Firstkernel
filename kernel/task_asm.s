@@ -1,145 +1,71 @@
-/*
- * ============================================================
- * FirstOS cooperative task context switch
- * ============================================================
- *
- * C prototype:
- *
- *     void task_switch_asm(
- *         uint32_t *old_esp,
- *         uint32_t new_esp
- *     );
- *
- *
- * Registers preserved:
- *
- *     EBP
- *     EBX
- *     ESI
- *     EDI
- *
- *
- * Stack layout after save:
- *
- *     ESP + 0   = EDI
- *     ESP + 4   = ESI
- *     ESP + 8   = EBX
- *     ESP + 12  = EBP
- *     ESP + 16  = return address
- *     ESP + 20  = old_esp argument
- *     ESP + 24  = new_esp argument
- */
-
-
-/*
- * ============================================================
- * 32-bit mode
- * ============================================================
- */
-.code32
-
-
-/*
- * ============================================================
- * Text section
- * ============================================================
- */
 .section .text
 
 
 /*
  * ============================================================
- * Export symbol
+ * Start first task
  * ============================================================
+ *
+ * Argument:
+ *
+ *     4(%esp) = pointer to task interrupt frame
+ *
+ * Frame:
+ *
+ *     edi
+ *     esi
+ *     ebp
+ *     esp
+ *     ebx
+ *     edx
+ *     ecx
+ *     eax
+ *     int_no
+ *     err_code
+ *     eip
+ *     cs
+ *     eflags
+ *
+ * We restore the frame exactly as isr_common() does.
  */
-.global task_switch_asm
+.global task_start_asm
+.type task_start_asm, @function
 
-.type task_switch_asm, @function
-
-
-/*
- * ============================================================
- * task_switch_asm
- * ============================================================
- */
-task_switch_asm:
+task_start_asm:
 
     /*
-     * --------------------------------------------------------
-     * Save current task registers.
-     * --------------------------------------------------------
+     * Load task ESP.
      */
-    push %ebp
-    push %ebx
-    push %esi
-    push %edi
+    mov 4(%esp), %eax
 
 
     /*
-     * --------------------------------------------------------
-     * Save current ESP.
-     *
-     * Function arguments before pushes:
-     *
-     *     4(%esp) = old_esp
-     *     8(%esp) = new_esp
-     *
-     * Four pushes added 16 bytes.
-     *
-     * Therefore:
-     *
-     *     20(%esp) = old_esp
-     *     24(%esp) = new_esp
-     * --------------------------------------------------------
+     * Switch to task stack.
      */
-    mov 20(%esp), %eax
-
-    mov %esp, (%eax)
+    mov %eax, %esp
 
 
     /*
-     * --------------------------------------------------------
-     * Load next task ESP.
-     *
-     * new_esp is a value, not a pointer.
-     * --------------------------------------------------------
+     * Restore general-purpose registers.
      */
-    mov 24(%esp), %esp
+    popa
 
 
     /*
-     * --------------------------------------------------------
-     * Restore next task registers.
-     * --------------------------------------------------------
+     * Remove:
+     *
+     *     int_no
+     *     err_code
      */
-    pop %edi
-    pop %esi
-    pop %ebx
-    pop %ebp
+    add $8, %esp
 
 
     /*
-     * --------------------------------------------------------
-     * Resume next task.
-     *
-     * ret uses the return address located immediately
-     * after the four saved registers.
-     *
-     * For a new task:
-     *
-     *     task_bootstrap
-     *
-     * For an existing task:
-     *
-     *     instruction after task_switch_asm()
-     * --------------------------------------------------------
+     * Enter task.
      */
-    ret
+    iret
+
+.size task_start_asm, . - task_start_asm
 
 
-/*
- * ============================================================
- * End
- * ============================================================
- */
-.size task_switch_asm, .-task_switch_asm
+.section .note.GNU-stack,"",@progbits

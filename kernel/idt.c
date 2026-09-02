@@ -7,9 +7,16 @@
 #include "keyboard.h"
 #include "console.h"
 #include "serial.h"
+#include "task.h"
 
 
-struct idt_entry {
+/*
+ * ============================================================
+ * IDT entry
+ * ============================================================
+ */
+struct idt_entry
+{
     uint16_t base_low;
     uint16_t selector;
     uint8_t  zero;
@@ -18,13 +25,25 @@ struct idt_entry {
 } __attribute__((packed));
 
 
-struct idt_ptr {
+/*
+ * ============================================================
+ * IDTR
+ * ============================================================
+ */
+struct idt_ptr
+{
     uint16_t limit;
     uint32_t base;
 } __attribute__((packed));
 
 
+/*
+ * ============================================================
+ * IDT storage
+ * ============================================================
+ */
 static struct idt_entry idt[256];
+
 static struct idt_ptr idtp;
 
 
@@ -34,8 +53,14 @@ static struct idt_ptr idtp;
  * ============================================================
  */
 
-extern void idt_flush(uint32_t);
+extern void idt_flush(
+    uint32_t
+);
 
+
+/*
+ * CPU exceptions
+ */
 extern void isr0(void);
 extern void isr1(void);
 extern void isr2(void);
@@ -69,13 +94,25 @@ extern void isr29(void);
 extern void isr30(void);
 extern void isr31(void);
 
+
+/*
+ * Hardware IRQs
+ */
 extern void isr32(void);
 extern void isr33(void);
 
 
 /*
+ * Software scheduler interrupt
+ *
+ * int 0x30
+ */
+extern void isr48(void);
+
+
+/*
  * ============================================================
- * Hexadecimal output
+ * Console hexadecimal output
  * ============================================================
  */
 static void console_write_hex32(
@@ -88,16 +125,22 @@ static void console_write_hex32(
     char buffer[9];
 
 
-    for (int i = 7; i >= 0; --i) {
+    for (
+        int i = 7;
+        i >= 0;
+        --i
+    ) {
 
         buffer[i] =
-            hex[value & 0xF];
+            hex[value & 0x0FU];
 
-        value >>= 4;
+        value >>=
+            4;
     }
 
 
-    buffer[8] = '\0';
+    buffer[8] =
+        '\0';
 
 
     console_write(
@@ -116,9 +159,46 @@ static void serial_write_hex32_line(
     uint32_t value
 )
 {
-    serial_write(name);
-    serial_write_hex32(value);
-    serial_write("\n");
+    serial_write(
+        name
+    );
+
+    serial_write(
+        "0x"
+    );
+
+
+    static const char hex[] =
+        "0123456789ABCDEF";
+
+    char buffer[9];
+
+
+    for (
+        int i = 7;
+        i >= 0;
+        --i
+    ) {
+
+        buffer[i] =
+            hex[value & 0x0FU];
+
+        value >>=
+            4;
+    }
+
+
+    buffer[8] =
+        '\0';
+
+
+    serial_write(
+        buffer
+    );
+
+    serial_write(
+        "\n"
+    );
 }
 
 
@@ -135,19 +215,26 @@ static void idt_set_gate(
 )
 {
     idt[num].base_low =
-        (uint16_t)(base & 0xFFFF);
+        (uint16_t)(
+            base &
+            0xFFFFU
+        );
+
 
     idt[num].base_high =
         (uint16_t)(
             (base >> 16) &
-            0xFFFF
+            0xFFFFU
         );
+
 
     idt[num].selector =
         selector;
 
+
     idt[num].zero =
         0;
+
 
     idt[num].flags =
         flags;
@@ -158,46 +245,75 @@ static void idt_set_gate(
  * ============================================================
  * IRQ dispatcher
  * ============================================================
+ *
+ * Returns the interrupt frame that the assembly ISR must
+ * restore.
+ *
+ * Normally this is the current frame.
+ *
+ * For IRQ0, the scheduler may return another task's frame.
  */
-static void irq_handler(
+static struct registers *irq_handler(
     struct registers *regs
 )
 {
-    uint32_t irq;
+    if (regs == 0) {
+        return regs;
+    }
 
 
-    irq =
-        regs->int_no - 32;
+    uint32_t irq =
+        regs->int_no - 32U;
 
 
     switch (irq) {
 
         /*
+         * ==================================================
          * IRQ0
          *
          * PIT timer
+         * ==================================================
          */
         case 0:
 
+            /*
+             * Update PIT tick counter and acknowledge
+             * IRQ0.
+             */
             timer_handler();
 
-            break;
+
+            /*
+             * Run preemptive scheduler.
+             *
+             * This may return the current task's frame
+             * or another task's saved frame.
+             */
+            return
+                task_scheduler_tick(
+                    regs
+                );
 
 
         /*
+         * ==================================================
          * IRQ1
          *
          * PS/2 keyboard
+         * ==================================================
          */
         case 1:
 
             keyboard_handler();
 
-            break;
+            return regs;
 
 
         /*
-         * Other IRQs.
+         * ==================================================
+         * Other IRQs
+         * ==================================================
          */
         default:
 
@@ -205,7 +321,7 @@ static void irq_handler(
                 (uint8_t)irq
             );
 
-            break;
+            return regs;
     }
 }
 
@@ -214,48 +330,113 @@ static void irq_handler(
  * ============================================================
  * Main interrupt dispatcher
  * ============================================================
+ *
+ * IMPORTANT:
+ *
+ * The return value is the interrupt frame that idt.s must
+ * restore.
+ *
+ * Normally:
+ *
+ *     return regs;
+ *
+ * During scheduling:
+ *
+ *     return another_task_frame;
  */
-void isr_handler(
+struct registers *isr_handler(
     struct registers *regs
 )
 {
     /*
-     * Hardware interrupt:
-     *
-     * 32-47
+     * Invalid frame.
      */
-    if (
-        regs->int_no >= 32 &&
-        regs->int_no <= 47
-    ) {
-        irq_handler(regs);
-        return;
+    if (regs == 0) {
+        return regs;
     }
 
 
     /*
-     * Page Fault:
+     * ========================================================
+     * Hardware IRQs
+     * ========================================================
+     *
+     * PIC is remapped:
+     *
+     *   IRQ0 -> vector 32
+     *   IRQ1 -> vector 33
+     *   ...
+     *   IRQ15 -> vector 47
+     */
+    if (
+        regs->int_no >= 32U &&
+        regs->int_no <= 47U
+    ) {
+
+        return
+            irq_handler(
+                regs
+            );
+    }
+
+
+    /*
+     * ========================================================
+     * Software scheduler interrupt
+     * ========================================================
+     *
+     * int 0x30
+     *
+     * Used by task_yield().
+     */
+    if (
+        regs->int_no == 48U
+    ) {
+
+        return
+            task_scheduler_tick(
+                regs
+            );
+    }
+
+
+    /*
+     * ========================================================
+     * Page Fault
+     * ========================================================
      *
      * Exception 14.
      */
     if (
-        regs->int_no == 14
+        regs->int_no == 14U
     ) {
+
         page_fault_handler(
             regs
         );
 
-        return;
+
+        /*
+         * Page fault handler normally does not return
+         * for fatal faults.
+         *
+         * Return the same frame for completeness.
+         */
+        return regs;
     }
 
 
     /*
-     * Generic CPU exception.
+     * ========================================================
+     * Generic CPU exception
+     * ========================================================
      */
+
     console_set_color(
         VGA_LRED,
         VGA_BLACK
     );
+
 
     console_write(
         "\n\n"
@@ -335,8 +516,11 @@ void isr_handler(
 
 
     /*
-     * Serial diagnostics.
+     * ========================================================
+     * Serial diagnostics
+     * ========================================================
      */
+
     serial_write(
         "\n\n"
         "========== CPU EXCEPTION ==========\n"
@@ -378,10 +562,14 @@ void isr_handler(
     );
 
 
+    /*
+     * Restore default console color.
+     */
     console_set_color(
         VGA_LGREY,
         VGA_BLACK
     );
+
 
     console_write(
         "CPU halted.\n"
@@ -398,9 +586,20 @@ void isr_handler(
      */
     for (;;) {
 
-        __asm__ volatile ("cli");
-        __asm__ volatile ("hlt");
+        __asm__ volatile (
+            "cli"
+        );
+
+        __asm__ volatile (
+            "hlt"
+        );
     }
+
+
+    /*
+     * Unreachable.
+     */
+    return regs;
 }
 
 
@@ -412,17 +611,21 @@ void isr_handler(
 void idt_init(void)
 {
     /*
-     * Configure IDTR.
+     * ========================================================
+     * Configure IDTR
+     * ========================================================
      */
     idtp.limit =
-        sizeof(idt) - 1;
+        sizeof(idt) - 1U;
 
     idtp.base =
         (uint32_t)&idt[0];
 
 
     /*
-     * Clear all entries.
+     * ========================================================
+     * Clear all IDT entries
+     * ========================================================
      */
     for (
         int i = 0;
@@ -430,16 +633,27 @@ void idt_init(void)
         ++i
     ) {
 
-        idt[i].base_low = 0;
-        idt[i].base_high = 0;
-        idt[i].selector = 0;
-        idt[i].zero = 0;
-        idt[i].flags = 0;
+        idt[i].base_low =
+            0;
+
+        idt[i].base_high =
+            0;
+
+        idt[i].selector =
+            0;
+
+        idt[i].zero =
+            0;
+
+        idt[i].flags =
+            0;
     }
 
 
     /*
-     * CPU exceptions 0-31.
+     * ========================================================
+     * CPU exception ISR table
+     * ========================================================
      */
     uint32_t isrs[32] = {
 
@@ -482,13 +696,17 @@ void idt_init(void)
 
 
     /*
+     * ========================================================
+     * Install CPU exception gates
+     * ========================================================
+     *
      * Kernel code segment:
      *
-     *   0x08
+     *     0x08
      *
      * Interrupt gate:
      *
-     *   0x8E
+     *     0x8E
      */
     for (
         int i = 0;
@@ -506,7 +724,11 @@ void idt_init(void)
 
 
     /*
-     * IRQ0 -> vector 32.
+     * ========================================================
+     * IRQ0
+     *
+     * Vector 32
+     * ========================================================
      */
     idt_set_gate(
         32,
@@ -517,7 +739,11 @@ void idt_init(void)
 
 
     /*
-     * IRQ1 -> vector 33.
+     * ========================================================
+     * IRQ1
+     *
+     * Vector 33
+     * ========================================================
      */
     idt_set_gate(
         33,
@@ -528,7 +754,26 @@ void idt_init(void)
 
 
     /*
-     * Load IDT register.
+     * ========================================================
+     * Software scheduler interrupt
+     *
+     * int 0x30
+     *
+     * Vector 48
+     * ========================================================
+     */
+    idt_set_gate(
+        48,
+        (uint32_t)isr48,
+        0x08,
+        0x8E
+    );
+
+
+    /*
+     * ========================================================
+     * Load IDT
+     * ========================================================
      */
     idt_flush(
         (uint32_t)&idtp

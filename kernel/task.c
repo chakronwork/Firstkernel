@@ -2,16 +2,16 @@
 
 #include "task.h"
 #include "kmalloc.h"
+#include "idt.h"
 
 
 /*
  * ============================================================
- * External assembly context switch
+ * External assembly
  * ============================================================
  */
-extern void task_switch_asm(
-    uint32_t *old_esp,
-    uint32_t new_esp
+extern void task_start_asm(
+    uint32_t esp
 );
 
 
@@ -20,9 +20,7 @@ extern void task_switch_asm(
  * Task table
  * ============================================================
  */
-static struct task tasks[
-    TASK_MAX
-];
+static struct task tasks[TASK_MAX];
 
 
 /*
@@ -38,16 +36,36 @@ static struct task *current_task = 0;
 
 
 /*
+ * Requested task.
+ *
+ * Used by task_switch().
+ *
+ * The actual context switch still happens inside the
+ * scheduler/interrupt path.
+ */
+static struct task *requested_task = 0;
+
+
+/*
  * ============================================================
  * CPU halt
  * ============================================================
+ *
+ * IMPORTANT:
+ *
+ * Interrupts remain enabled.
+ *
+ * This allows PIT IRQ0 to wake the CPU and the scheduler
+ * to switch to another task.
  */
 static void task_halt(void)
 {
     for (;;) {
 
-        __asm__ volatile ("cli");
-        __asm__ volatile ("hlt");
+        __asm__ volatile (
+            "sti\n"
+            "hlt"
+        );
     }
 }
 
@@ -57,17 +75,9 @@ static void task_halt(void)
  * Task bootstrap
  * ============================================================
  *
- * A newly created task starts here.
+ * Every newly created task starts here.
  *
- * The initial task stack is prepared so that after:
- *
- *     pop edi
- *     pop esi
- *     pop ebx
- *     pop ebp
- *     ret
- *
- * execution enters this function.
+ * task_start_asm() enters this function using iret().
  */
 static void task_bootstrap(void)
 {
@@ -75,19 +85,21 @@ static void task_bootstrap(void)
         current_task;
 
 
-    if (task == 0)
+    if (task == 0) {
+
         task_halt();
+    }
 
 
     /*
-     * Newly started task is now running.
+     * Task is now running.
      */
     task->state =
         TASK_RUNNING;
 
 
     /*
-     * Execute task entry.
+     * Execute task entry function.
      */
     if (task->entry != 0) {
 
@@ -98,37 +110,25 @@ static void task_bootstrap(void)
 
 
     /*
-     * Entry function returned.
+     * Entry returned.
      *
-     * The task is now permanently dead.
+     * Task is permanently dead.
      */
     task->state =
         TASK_DEAD;
 
 
     /*
-     * Find another runnable task.
+     * Do not return to task_start_asm().
      *
-     * A DEAD task must never return to its old entry
-     * function.
+     * We stay in HLT.
+     *
+     * PIT interrupts remain enabled.
+     *
+     * When IRQ0 arrives, the scheduler can switch
+     * to another READY task.
      */
-    for (;;) {
-
-        task_yield();
-
-
-        /*
-         * If task_yield() returned and the current task
-         * is still DEAD, no other runnable task exists.
-         */
-        if (
-            task->state ==
-            TASK_DEAD
-        ) {
-
-            task_halt();
-        }
-    }
+    task_halt();
 }
 
 
@@ -180,6 +180,9 @@ int task_init(void)
     current_task =
         0;
 
+    requested_task =
+        0;
+
 
     return 1;
 }
@@ -214,25 +217,34 @@ static struct task *find_free_task(void)
 
 /*
  * ============================================================
- * Prepare initial task stack
+ * Prepare initial interrupt frame
  * ============================================================
  *
- * task_switch_asm() restores:
+ * IMPORTANT:
  *
- *     pop edi
- *     pop esi
- *     pop ebx
- *     pop ebp
- *     ret
+ * The layout MUST match kernel/idt.s:
  *
+ *   edi
+ *   esi
+ *   ebp
+ *   esp
+ *   ebx
+ *   edx
+ *   ecx
+ *   eax
+ *   int_no
+ *   err_code
+ *   eip
+ *   cs
+ *   eflags
  *
- * Therefore the stack must be:
+ * After task_start_asm() performs:
  *
- *     ESP + 0   fake EDI
- *     ESP + 4   fake ESI
- *     ESP + 8   fake EBX
- *     ESP + 12  fake EBP
- *     ESP + 16  task_bootstrap
+ *   popa
+ *   add $8, %esp
+ *   iret
+ *
+ * execution enters task_bootstrap().
  */
 static uint32_t prepare_stack(
     struct task *task
@@ -246,7 +258,7 @@ static uint32_t prepare_stack(
 
     if (
         task->stack_size <
-        64U
+        128U
     ) {
         return 0;
     }
@@ -261,7 +273,7 @@ static uint32_t prepare_stack(
 
 
     /*
-     * Align stack to 16 bytes.
+     * 16-byte alignment.
      */
     stack_top &=
         ~(uintptr_t)0x0FU;
@@ -272,7 +284,33 @@ static uint32_t prepare_stack(
 
 
     /*
-     * Push return address first.
+     * ========================================================
+     * CPU return frame
+     * ========================================================
+     */
+
+    /*
+     * EFLAGS
+     *
+     * Bit 9 = IF
+     *
+     * 0x202 = reserved bit + interrupt enable.
+     */
+    *(--stack) =
+        0x00000202U;
+
+
+    /*
+     * CS
+     *
+     * Kernel code segment.
+     */
+    *(--stack) =
+        0x00000008U;
+
+
+    /*
+     * EIP
      */
     *(--stack) =
         (uint32_t)(uintptr_t)
@@ -280,35 +318,79 @@ static uint32_t prepare_stack(
 
 
     /*
-     * Fake EBP.
+     * Error code.
      */
     *(--stack) =
         0;
 
 
     /*
-     * Fake EBX.
+     * Interrupt number.
      */
     *(--stack) =
         0;
 
 
     /*
-     * Fake ESI.
+     * EAX.
      */
     *(--stack) =
         0;
 
 
     /*
-     * Fake EDI.
+     * ECX.
      */
     *(--stack) =
         0;
 
 
     /*
-     * ESP now points at fake EDI.
+     * EDX.
+     */
+    *(--stack) =
+        0;
+
+
+    /*
+     * EBX.
+     */
+    *(--stack) =
+        0;
+
+
+    /*
+     * ESP slot.
+     *
+     * popa skips this value.
+     */
+    *(--stack) =
+        0;
+
+
+    /*
+     * EBP.
+     */
+    *(--stack) =
+        0;
+
+
+    /*
+     * ESI.
+     */
+    *(--stack) =
+        0;
+
+
+    /*
+     * EDI.
+     */
+    *(--stack) =
+        0;
+
+
+    /*
+     * Return pointer to EDI.
      */
     return
         (uint32_t)(uintptr_t)
@@ -360,7 +442,7 @@ uint32_t task_create(
 
 
     /*
-     * Initialize task metadata.
+     * Initialize metadata.
      */
     task->id =
         next_task_id++;
@@ -380,20 +462,12 @@ uint32_t task_create(
     task->arg =
         arg;
 
-
-    /*
-     * v0.0.17 tasks use the existing kernel
-     * address space.
-     *
-     * This field will be used when user mode
-     * is implemented.
-     */
     task->address_space =
         0;
 
 
     /*
-     * Create initial CPU context.
+     * Prepare first CPU context.
      */
     task->context.esp =
         prepare_stack(
@@ -478,41 +552,65 @@ struct task *task_get(
 
 /*
  * ============================================================
- * Find next READY task
+ * Find current task index
  * ============================================================
- *
- * Simple round-robin search.
  */
-static struct task *find_next_task(void)
+static uint32_t current_index(void)
 {
-    uint32_t start_index =
-        0;
+    if (current_task == 0)
+        return 0;
+
+
+    uintptr_t current_address =
+        (uintptr_t)current_task;
+
+    uintptr_t first_address =
+        (uintptr_t)&tasks[0];
+
+
+    uintptr_t offset =
+        current_address -
+        first_address;
+
+
+    uint32_t index =
+        (uint32_t)(
+            offset /
+            sizeof(struct task)
+        );
 
 
     if (
-        current_task != 0
+        index >=
+        TASK_MAX
     ) {
-
-        uintptr_t current_address =
-            (uintptr_t)current_task;
-
-        uintptr_t first_address =
-            (uintptr_t)&tasks[0];
-
-
-        uintptr_t index =
-            (
-                current_address -
-                first_address
-            ) / sizeof(struct task);
-
-
-        start_index =
-            (
-                (uint32_t)index +
-                1U
-            ) % TASK_MAX;
+        return 0;
     }
+
+
+    return index;
+}
+
+
+/*
+ * ============================================================
+ * Find next READY task
+ * ============================================================
+ *
+ * Simple round-robin scan.
+ */
+static struct task *find_next_task(void)
+{
+    uint32_t start =
+        current_index();
+
+
+    start =
+        (
+            start +
+            1U
+        ) %
+        TASK_MAX;
 
 
     for (
@@ -523,9 +621,10 @@ static struct task *find_next_task(void)
 
         uint32_t index =
             (
-                start_index +
+                start +
                 offset
-            ) % TASK_MAX;
+            ) %
+            TASK_MAX;
 
 
         if (
@@ -533,8 +632,7 @@ static struct task *find_next_task(void)
             TASK_READY
         ) {
 
-            return
-                &tasks[index];
+            return &tasks[index];
         }
     }
 
@@ -545,8 +643,194 @@ static struct task *find_next_task(void)
 
 /*
  * ============================================================
- * Switch task
+ * Scheduler tick
  * ============================================================
+ *
+ * Called while handling:
+ *
+ *     IRQ0
+ *
+ * or:
+ *
+ *     int 0x30
+ *
+ * regs points to the complete interrupt frame for the
+ * currently executing task.
+ *
+ * Returns the interrupt frame that must be restored.
+ */
+struct registers *task_scheduler_tick(
+    struct registers *regs
+)
+{
+    if (regs == 0)
+        return regs;
+
+
+    /*
+     * No task is running yet.
+     */
+    if (current_task == 0)
+        return regs;
+
+
+    /*
+     * ========================================================
+     * Save current task CPU context
+     * ========================================================
+     *
+     * The current task may be:
+     *
+     *   RUNNING
+     *   DEAD
+     *   BLOCKED
+     *
+     * Its current interrupt frame is saved here.
+     */
+    current_task->context.esp =
+        (uint32_t)(uintptr_t)regs;
+
+
+    /*
+     * ========================================================
+     * Select next task
+     * ========================================================
+     */
+    struct task *next =
+        0;
+
+
+    /*
+     * Honor explicit task_switch() request first.
+     */
+    if (
+        requested_task != 0 &&
+        requested_task->state ==
+        TASK_READY
+    ) {
+
+        next =
+            requested_task;
+
+        requested_task =
+            0;
+    }
+
+
+    /*
+     * Normal round-robin scheduling.
+     */
+    if (next == 0) {
+
+        next =
+            find_next_task();
+    }
+
+
+    /*
+     * No READY task.
+     */
+    if (next == 0) {
+
+        /*
+         * Current task is still runnable.
+         */
+        if (
+            current_task->state ==
+            TASK_RUNNING
+        ) {
+
+            return regs;
+        }
+
+
+        /*
+         * Current task is DEAD/BLOCKED and no replacement
+         * exists.
+         *
+         * Leave the current frame alone.
+         */
+        return regs;
+    }
+
+
+    /*
+     * ========================================================
+     * Same task
+     * ========================================================
+     */
+    if (
+        next ==
+        current_task
+    ) {
+
+        current_task->state =
+            TASK_RUNNING;
+
+        return regs;
+    }
+
+
+    /*
+     * ========================================================
+     * Current task state
+     * ========================================================
+     *
+     * A RUNNING task becomes READY.
+     *
+     * A DEAD task remains DEAD.
+     *
+     * A BLOCKED task remains BLOCKED.
+     */
+    if (
+        current_task->state ==
+        TASK_RUNNING
+    ) {
+
+        current_task->state =
+            TASK_READY;
+    }
+
+
+    /*
+     * ========================================================
+     * Activate next task
+     * ========================================================
+     */
+    current_task =
+        next;
+
+
+    current_task->state =
+        TASK_RUNNING;
+
+
+    /*
+     * ========================================================
+     * Return new task's saved interrupt frame
+     * ========================================================
+     *
+     * idt.s will:
+     *
+     *     mov %eax, %esp
+     *     popa
+     *     add $8, %esp
+     *     iret
+     */
+    return
+        (struct registers *)
+        (uintptr_t)
+        current_task->context.esp;
+}
+
+
+/*
+ * ============================================================
+ * Direct task switch request
+ * ============================================================
+ *
+ * The actual switch occurs inside the interrupt-driven
+ * scheduler.
  */
 int task_switch(
     struct task *next
@@ -556,107 +840,24 @@ int task_switch(
         return 0;
 
 
-    /*
-     * Only READY/RUNNING tasks can execute.
-     */
     if (
-        next->state != TASK_READY &&
-        next->state != TASK_RUNNING
+        next->state !=
+        TASK_READY
     ) {
-
         return 0;
     }
 
 
-    /*
-     * ==================================================
-     * First task
-     * ==================================================
-     *
-     * No old task exists yet.
-     */
-    if (
-        current_task == 0
-    ) {
-
-        current_task =
-            next;
-
-        next->state =
-            TASK_RUNNING;
-
-
-        /*
-         * Dummy storage because there is no
-         * previous task context.
-         */
-        uint32_t dummy_esp =
-            0;
-
-
-        task_switch_asm(
-            &dummy_esp,
-            next->context.esp
-        );
-
-
-        return 1;
-    }
-
-
-    /*
-     * Don't switch to ourselves.
-     */
-    if (
-        current_task ==
-        next
-    ) {
-        return 1;
-    }
-
-
-    struct task *old =
-        current_task;
-
-
-    /*
-     * Only a running task becomes READY.
-     *
-     * A DEAD task remains DEAD.
-     */
-    if (
-        old->state ==
-        TASK_RUNNING
-    ) {
-
-        old->state =
-            TASK_READY;
-    }
-
-
-    /*
-     * Activate next task.
-     */
-    current_task =
+    requested_task =
         next;
 
-    next->state =
-        TASK_RUNNING;
-
 
     /*
-     * Save current context and restore next.
+     * Enter scheduler through software interrupt.
      */
-    task_switch_asm(
-        &old->context.esp,
-        next->context.esp
-    );
+    task_yield();
 
 
-    /*
-     * When the old task is selected again,
-     * execution resumes here.
-     */
     return 1;
 }
 
@@ -665,46 +866,16 @@ int task_switch(
  * ============================================================
  * Cooperative yield
  * ============================================================
+ *
+ * Scheduler software interrupt.
  */
 void task_yield(void)
 {
-    struct task *current =
-        current_task;
-
-
-    struct task *next =
-        find_next_task();
-
-
-    /*
-     * Nothing else is runnable.
-     */
-    if (next == 0)
-        return;
-
-
-    /*
-     * If current task is still running,
-     * it becomes READY during the switch.
-     */
-    if (
-        current != 0 &&
-        current->state == TASK_RUNNING
-    ) {
-
-        current->state =
-            TASK_READY;
-    }
-
-
-    /*
-     * Switch.
-     *
-     * task_switch() sees current_task already set,
-     * so it saves the current CPU context.
-     */
-    task_switch(
-        next
+    __asm__ volatile (
+        "int $0x30"
+        :
+        :
+        : "memory"
     );
 }
 
@@ -713,6 +884,10 @@ void task_yield(void)
  * ============================================================
  * Start scheduler
  * ============================================================
+ *
+ * This starts the first READY task.
+ *
+ * It does not return during normal operation.
  */
 int task_start(void)
 {
@@ -724,17 +899,60 @@ int task_start(void)
 
 
     struct task *first =
-        find_next_task();
+        0;
+
+
+    /*
+     * Find first READY task.
+     */
+    for (
+        uint32_t i = 0;
+        i < TASK_MAX;
+        ++i
+    ) {
+
+        if (
+            tasks[i].state ==
+            TASK_READY
+        ) {
+
+            first =
+                &tasks[i];
+
+            break;
+        }
+    }
 
 
     if (first == 0)
         return 0;
 
 
-    return
-        task_switch(
-            first
-        );
+    /*
+     * Activate first task.
+     */
+    current_task =
+        first;
+
+    first->state =
+        TASK_RUNNING;
+
+
+    /*
+     * Enter first task through an interrupt-style
+     * return frame.
+     *
+     * task_start_asm() does not return.
+     */
+    task_start_asm(
+        first->context.esp
+    );
+
+
+    /*
+     * Unreachable.
+     */
+    return 0;
 }
 
 
