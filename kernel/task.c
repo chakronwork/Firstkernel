@@ -1439,6 +1439,100 @@ static void wake_expired_tasks(
 
 /*
  * ============================================================
+ * Scheduler invariants
+ * ============================================================
+ *
+ * These checks verify the relationship between:
+ *
+ *     current_task
+ *     task state
+ *     address space / CR3
+ *     kernel stack
+ *     TSS.ESP0
+ *
+ * A violation is fatal because continuing with an invalid
+ * scheduler state can corrupt execution context.
+ */
+static int task_check_scheduler_invariants(void)
+{
+    if (
+        current_task == 0
+    ) {
+        serial_write(
+            "[panic] scheduler invariant: current_task is NULL\n"
+        );
+
+        return 0;
+    }
+
+    if (
+        current_task->state !=
+        TASK_RUNNING
+    ) {
+        serial_write(
+            "[panic] scheduler invariant: current task not RUNNING\n"
+        );
+
+        return 0;
+    }
+
+    if (
+        current_task->address_space == 0
+    ) {
+        serial_write(
+            "[panic] scheduler invariant: current address space is NULL\n"
+        );
+
+        return 0;
+    }
+
+    if (
+        current_task->kernel_stack == 0 ||
+        current_task->kernel_stack_size == 0
+    ) {
+        serial_write(
+            "[panic] scheduler invariant: current kernel stack invalid\n"
+        );
+
+        return 0;
+    }
+
+    if (
+        address_space_get_current_cr3() !=
+        current_task->address_space->page_directory_physical
+    ) {
+        serial_write(
+            "[panic] scheduler invariant: CR3 mismatch\n"
+        );
+
+        return 0;
+    }
+
+    uint32_t expected_esp0 =
+        (uint32_t)(
+            uintptr_t
+        )(
+            current_task->kernel_stack +
+            current_task->kernel_stack_size
+        );
+
+    if (
+        tss_get_kernel_stack() !=
+        expected_esp0
+    ) {
+        serial_write(
+            "[panic] scheduler invariant: TSS.ESP0 mismatch\n"
+        );
+
+        return 0;
+    }
+
+    return 1;
+}
+
+
+/*
+ * ============================================================
  * Scheduler tick
  * ============================================================
  */
@@ -1565,56 +1659,54 @@ struct registers *task_scheduler_tick(
 
     /*
      * ========================================================
-     * Current task state
+     * Validate incoming task before changing current state.
      * ========================================================
      *
-     * A RUNNING task becomes READY.
-     *
-     * A DEAD task remains DEAD.
-     *
-     * A BLOCKED task remains BLOCKED.
-     */
-    if (
-        current_task->state ==
-        TASK_RUNNING
-    ) {
-
-        current_task->state =
-            TASK_READY;
-    }
-
-
-    /*
-     * ========================================================
-     * Activate next task
-     * ========================================================
-     *
-     * Switch address space before activating the task.
+     * If any validation fails, the current task remains
+     * RUNNING and its CR3/TSS state remains authoritative.
      */
     if (
         next->address_space == 0
     ) {
+        serial_write(
+            "[panic] scheduler: next task has no address space\n"
+        );
+
         return regs;
     }
 
+    if (
+        next->kernel_stack == 0 ||
+        next->kernel_stack_size == 0
+    ) {
+        serial_write(
+            "[panic] scheduler: next task has invalid kernel stack\n"
+        );
+
+        return regs;
+    }
+
+    /*
+     * ========================================================
+     * Activate incoming address space.
+     * ========================================================
+     */
     if (
         !address_space_switch(
             next->address_space
         )
     ) {
+        serial_write(
+            "[panic] scheduler: address-space switch failed\n"
+        );
+
         return regs;
     }
 
     /*
-     * Update TSS.ESP0 for the incoming task.
+     * Update TSS.ESP0 only after the incoming task has been
+     * validated completely.
      */
-    if (
-        next->kernel_stack == 0 ||
-        next->kernel_stack_size == 0
-    ) {
-        return regs;
-    }
-
     tss_set_kernel_stack(
         (uint32_t)(
             uintptr_t
@@ -1625,8 +1717,21 @@ struct registers *task_scheduler_tick(
     );
 
     /*
-     * Activate task after CR3 and TSS stack switch.
+     * ========================================================
+     * Commit task switch.
+     * ========================================================
+     *
+     * Only now is the old RUNNING task allowed to become
+     * READY, and only now does current_task change.
      */
+    if (
+        current_task->state ==
+        TASK_RUNNING
+    ) {
+        current_task->state =
+            TASK_READY;
+    }
+
     current_task =
         next;
 
@@ -1639,6 +1744,16 @@ struct registers *task_scheduler_tick(
      * to DEAD tasks.
      */
     reap_dead_tasks();
+
+    /*
+     * Verify scheduler invariants after the switch and
+     * resource reclamation have completed.
+     */
+    if (
+        !task_check_scheduler_invariants()
+    ) {
+        task_halt();
+    }
 
     /*
      * Diagnostic:
@@ -1828,6 +1943,16 @@ int task_start(void)
 
     first->state =
         TASK_RUNNING;
+
+    /*
+     * Verify the initial scheduler state before entering
+     * the first task.
+     */
+    if (
+        !task_check_scheduler_invariants()
+    ) {
+        return 0;
+    }
 
 
     /*

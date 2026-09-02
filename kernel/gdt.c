@@ -51,6 +51,11 @@ void tss_set_kernel_stack(uint32_t esp0)
     tss.esp0 = esp0;
 }
 
+uint32_t tss_get_kernel_stack(void)
+{
+    return tss.esp0;
+}
+
 void tss_init(void)
 {
     uint32_t stack_top =
