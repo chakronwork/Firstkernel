@@ -1,192 +1,232 @@
 #include <stdint.h>
 
 #include "user_test.h"
+#include "task.h"
 #include "address_space.h"
-#include "pmm.h"
 #include "paging.h"
-#include "console.h"
+#include "pmm.h"
 #include "serial.h"
-#include "idt.h"
+#include "console.h"
 
-#define USER_TEST_CODE  0x40000000U
-#define USER_TEST_STACK 0x40001000U
+#define USER_CODE_A  0x40000000U
+#define USER_CODE_B  0x40002000U
 
-#define USER_TEST_CS 0x1BU
-#define USER_TEST_DS 0x23U
+#define USER_STACK_A 0x40001000U
+#define USER_STACK_B 0x40003000U
 
-extern void ring3_enter(
-    uint32_t user_eip,
-    uint32_t user_esp
-);
+#define USER_STACK_TOP_A \
+    (USER_STACK_A + PAGE_SIZE - 16U)
+
+#define USER_STACK_TOP_B \
+    (USER_STACK_B + PAGE_SIZE - 16U)
 
 /*
- * User program:
+ * User task A:
  *
- *     int 0x30
- *     jmp $-2
+ *     jmp $
  *
- * CD 30
- * EB FC
+ * Infinite CPU loop.
  *
- * Once inside Ring 3, this repeatedly enters
- * the kernel through vector 0x30.
+ * There is intentionally NO syscall and NO yield.
+ *
+ * PIT IRQ0 must preempt this task.
  */
-static const uint8_t user_code[] = {
-    0xCD, 0x30,
-    0xEB, 0xFC
+static const uint8_t user_code_a[] = {
+    0xEB, 0xFE
 };
 
-static struct address_space *test_space;
-static uint32_t code_page;
-static uint32_t stack_page;
+/*
+ * User task B:
+ *
+ *     nop
+ *     jmp $
+ */
+static const uint8_t user_code_b[] = {
+    0x90,
+    0xEB, 0xFE
+};
 
-int user_test_init(void)
+static int setup_user_task(
+    uint32_t task_id,
+    uint32_t code_va,
+    uint32_t stack_va,
+    const uint8_t *code,
+    uint32_t code_size,
+    uint32_t stack_top,
+    char task_name
+)
 {
-    serial_write(
-        "[test] preparing Ring 3 context\n"
-    );
+    struct task *task =
+        task_get(task_id);
 
-    test_space =
-        address_space_create();
-
-    if (test_space == 0) {
-
-        serial_write(
-            "[fail] Ring 3 address space create\n"
-        );
-
+    if (task == 0)
         return 0;
-    }
 
-    code_page =
+    uint32_t code_page =
         pmm_alloc_page();
 
-    stack_page =
+    uint32_t stack_page =
         pmm_alloc_page();
 
     if (
         code_page == 0 ||
         stack_page == 0
     ) {
-
-        if (code_page != 0)
-            pmm_free_page(code_page);
-
-        if (stack_page != 0)
-            pmm_free_page(stack_page);
-
-        address_space_destroy(
-            test_space
-        );
-
-        test_space = 0;
-
-        serial_write(
-            "[fail] Ring 3 page allocation\n"
-        );
-
         return 0;
     }
 
-    /*
-     * User code mapping.
-     */
     if (
         !address_space_map_page(
-            test_space,
-            USER_TEST_CODE,
+            task->address_space,
+            code_va,
             code_page,
             PAGE_PRESENT |
             PAGE_WRITABLE |
             PAGE_USER
         )
     ) {
-
-        pmm_free_page(code_page);
-        pmm_free_page(stack_page);
-
-        address_space_destroy(
-            test_space
-        );
-
-        test_space = 0;
-
-        serial_write(
-            "[fail] Ring 3 code mapping\n"
-        );
-
         return 0;
     }
 
-    /*
-     * User stack mapping.
-     */
     if (
         !address_space_map_page(
-            test_space,
-            USER_TEST_STACK,
+            task->address_space,
+            stack_va,
             stack_page,
             PAGE_PRESENT |
             PAGE_WRITABLE |
             PAGE_USER
         )
     ) {
+        return 0;
+    }
 
-        address_space_unmap_page(
-            test_space,
-            USER_TEST_CODE
+    /*
+     * The bootstrap kernel mapping identity-maps physical memory.
+     */
+    uint8_t *dst =
+        (uint8_t *)(uintptr_t)code_page;
+
+    for (
+        uint32_t i = 0;
+        i < code_size;
+        ++i
+    ) {
+        dst[i] =
+            code[i];
+    }
+
+    task->user_stack_physical =
+        stack_page;
+
+    task->user_stack_virtual =
+        stack_va;
+
+    task->user_stack_size =
+        PAGE_SIZE;
+
+    serial_write(
+        "[ ok ] created Ring 3 task "
+    );
+
+    if (task_name == 'A') {
+        serial_write("A\n");
+    } else {
+        serial_write("B\n");
+    }
+
+    /*
+     * Ensure these values remain the exact user context.
+     */
+    task->user_entry =
+        code_va;
+
+    task->user_esp =
+        stack_top;
+
+    return 1;
+}
+
+int user_test_init(void)
+{
+    serial_write(
+        "[test] creating Ring 3 tasks\n"
+    );
+
+    console_write(
+        "[test] creating Ring 3 tasks\n"
+    );
+
+    uint32_t task_a =
+        task_create_user(
+            USER_CODE_A,
+            USER_STACK_TOP_A
         );
 
-        pmm_free_page(code_page);
-        pmm_free_page(stack_page);
-
-        address_space_destroy(
-            test_space
-        );
-
-        test_space = 0;
-
+    if (task_a == 0) {
         serial_write(
-            "[fail] Ring 3 stack mapping\n"
+            "[fail] Ring 3 task A creation\n"
         );
 
         return 0;
     }
 
-    /*
-     * Bootstrap mapping is identity mapped,
-     * so write directly to the physical frame.
-     */
-    uint8_t *code =
-        (uint8_t *)(uintptr_t)code_page;
+    uint32_t task_b =
+        task_create_user(
+            USER_CODE_B,
+            USER_STACK_TOP_B
+        );
 
-    for (
-        uint32_t i = 0;
-        i < sizeof(user_code);
-        ++i
-    ) {
-        code[i] = user_code[i];
+    if (task_b == 0) {
+        serial_write(
+            "[fail] Ring 3 task B creation\n"
+        );
+
+        return 0;
     }
 
     if (
-        !address_space_switch(
-            test_space
+        !setup_user_task(
+            task_a,
+            USER_CODE_A,
+            USER_STACK_A,
+            user_code_a,
+            sizeof(user_code_a),
+            USER_STACK_TOP_A,
+            'A'
         )
     ) {
-
         serial_write(
-            "[fail] Ring 3 CR3 switch\n"
+            "[fail] Ring 3 task A address space\n"
+        );
+
+        return 0;
+    }
+
+    if (
+        !setup_user_task(
+            task_b,
+            USER_CODE_B,
+            USER_STACK_B,
+            user_code_b,
+            sizeof(user_code_b),
+            USER_STACK_TOP_B,
+            'B'
+        )
+    ) {
+        serial_write(
+            "[fail] Ring 3 task B address space\n"
         );
 
         return 0;
     }
 
     serial_write(
-        "[ ok ] Ring 3 address space active\n"
+        "[ ok ] Ring 3 task A ready\n"
     );
 
-    console_write(
-        "[ ok ] Ring 3 address space active\n"
+    serial_write(
+        "[ ok ] Ring 3 task B ready\n"
     );
 
     return 1;
@@ -194,36 +234,17 @@ int user_test_init(void)
 
 void user_test_start(void)
 {
-    uint32_t user_esp =
-        USER_TEST_STACK +
-        PAGE_SIZE -
-        16U;
-
+    /*
+     * The actual transition is now performed by task_start().
+     *
+     * The scheduler will eventually select the Ring 3 tasks
+     * and their saved iret frames will enter CPL3.
+     */
     serial_write(
-        "[test] entering Ring 3\n"
+        "[test] Ring 3 tasks ready for scheduler\n"
     );
 
     console_write(
-        "[test] entering Ring 3\n"
+        "[test] Ring 3 tasks ready for scheduler\n"
     );
-
-    /*
-     * Enable isolated Ring 3 interrupt path.
-     */
-    idt_set_user_test_active(
-        1
-    );
-
-    ring3_enter(
-        USER_TEST_CODE,
-        user_esp
-    );
-
-    /*
-     * Should never return.
-     */
-    for (;;) {
-        __asm__ volatile ("cli");
-        __asm__ volatile ("hlt");
-    }
 }

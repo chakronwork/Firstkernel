@@ -50,20 +50,6 @@ struct task
     uint8_t *kernel_stack;
     uint32_t kernel_stack_size;
 
-    /*
-     * User-mode execution state.
-     */
-    uint32_t user_entry;
-    uint32_t user_esp;
-    uint32_t user_mode;
-
-    /*
-     * User stack backing page.
-     */
-    uint32_t user_stack_physical;
-    uint32_t user_stack_virtual;
-    uint32_t user_stack_size;
-
     void (*entry)(
         void *arg
     );
@@ -81,15 +67,6 @@ uint32_t task_create(
     void (*entry)(void *arg),
     void *arg
 );
-
-/*
- * Create a task whose saved context returns to CPL3.
- */
-uint32_t task_create_user(
-    uint32_t user_entry,
-    uint32_t user_esp
-);
-
 
 
 struct task *task_current(void);

@@ -74,12 +74,6 @@ struct registers *isr_handler(
     struct registers *regs
 );
 
-/*
- * Enable or disable the isolated Ring 3 test path.
- */
-void idt_set_user_test_active(
-    int active
-);
 
 
 #endif /* IDT_H */

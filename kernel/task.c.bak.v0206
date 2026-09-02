@@ -1,8 +1,6 @@
 #include <stdint.h>
 
 #include "task.h"
-#include "serial.h"
-#include "gdt.h"
 #include "kmalloc.h"
 #include "idt.h"
 
@@ -48,8 +46,6 @@ static struct task *current_task = 0;
  * scheduler/interrupt path.
  */
 static struct task *requested_task = 0;
-
-static uint32_t user_switch_log_count = 0U;
 
 
 /*
@@ -173,24 +169,6 @@ tasks[i].context.esp =
             0;
 
         tasks[i].kernel_stack_size =
-            0;
-
-        tasks[i].user_entry =
-            0;
-
-        tasks[i].user_esp =
-            0;
-
-        tasks[i].user_mode =
-            0;
-
-        tasks[i].user_stack_physical =
-            0;
-
-        tasks[i].user_stack_virtual =
-            0;
-
-        tasks[i].user_stack_size =
             0;
 
         tasks[i].entry =
@@ -433,111 +411,6 @@ static uint32_t prepare_stack(
 
 /*
  * ============================================================
- * Prepare initial Ring 3 interrupt frame
- * ============================================================
- *
- * Frame:
- *
- *   edi
- *   esi
- *   ebp
- *   esp
- *   ebx
- *   edx
- *   ecx
- *   eax
- *   int_no
- *   err_code
- *   eip
- *   cs
- *   eflags
- *   user_esp
- *   user_ss
- *
- * idt.s restores this with:
- *
- *   popa
- *   add $8, %esp
- *   iret
- */
-static uint32_t prepare_user_stack(
-    struct task *task
-)
-{
-    if (task == 0)
-        return 0;
-
-    if (task->kernel_stack == 0)
-        return 0;
-
-    if (task->kernel_stack_size < 128U)
-        return 0;
-
-    uintptr_t stack_top =
-        (uintptr_t)task->kernel_stack +
-        task->kernel_stack_size;
-
-    stack_top &=
-        ~(uintptr_t)0x0FU;
-
-    uint32_t *stack =
-        (uint32_t *)stack_top;
-
-    /*
-     * CPU-level iret frame.
-     */
-    *(--stack) =
-        GDT_USER_DATA | 0x3U;
-
-    *(--stack) =
-        task->user_esp;
-
-    /*
-     * EFLAGS:
-     *
-     * bit 1 = reserved
-     * bit 9 = IF
-     */
-    *(--stack) =
-        0x00000202U;
-
-    *(--stack) =
-        GDT_USER_CODE | 0x3U;
-
-    *(--stack) =
-        task->user_entry;
-
-    /*
-     * Error code.
-     */
-    *(--stack) =
-        0;
-
-    /*
-     * Interrupt number.
-     */
-    *(--stack) =
-        0;
-
-    /*
-     * General registers.
-     */
-    *(--stack) = 0; /* eax */
-    *(--stack) = 0; /* ecx */
-    *(--stack) = 0; /* edx */
-    *(--stack) = 0; /* ebx */
-    *(--stack) = 0; /* esp slot */
-    *(--stack) = 0; /* ebp */
-    *(--stack) = 0; /* esi */
-    *(--stack) = 0; /* edi */
-
-    return
-        (uint32_t)(uintptr_t)
-        stack;
-}
-
-/*
- * ============================================================
  * Create task
  * ============================================================
  */
@@ -621,24 +494,6 @@ task->stack =
     task->kernel_stack_size =
         TASK_STACK_SIZE;
 
-    task->user_entry =
-        0;
-
-    task->user_esp =
-        0;
-
-    task->user_mode =
-        0;
-
-    task->user_stack_physical =
-        0;
-
-    task->user_stack_virtual =
-        0;
-
-    task->user_stack_size =
-        0;
-
     task->entry =
         entry;
 
@@ -689,141 +544,6 @@ task->stack =
     return task->id;
 }
 
-
-/*
- * ============================================================
- * Create User Task
- * ============================================================
- *
- * The task begins in CPL3 through its saved iret frame.
- *
- * user_entry:
- *     user virtual instruction pointer
- *
- * user_esp:
- *     user virtual stack pointer
- */
-uint32_t task_create_user(
-    uint32_t user_entry,
-    uint32_t user_esp
-)
-{
-    if (user_entry == 0)
-        return 0;
-
-    if (user_esp == 0)
-        return 0;
-
-    if (total_tasks >= TASK_MAX)
-        return 0;
-
-    struct task *task =
-        find_free_task();
-
-    if (task == 0)
-        return 0;
-
-    uint8_t *stack =
-        (uint8_t *)kmalloc(
-            TASK_STACK_SIZE
-        );
-
-    if (stack == 0)
-        return 0;
-
-    struct address_space *space =
-        address_space_create();
-
-    if (space == 0) {
-        kfree(stack);
-        return 0;
-    }
-
-    task->id =
-        next_task_id++;
-
-    task->state =
-        TASK_READY;
-
-    task->wake_tick =
-        0;
-
-    task->stack =
-        stack;
-
-    task->stack_size =
-        TASK_STACK_SIZE;
-
-    task->kernel_stack =
-        stack;
-
-    task->kernel_stack_size =
-        TASK_STACK_SIZE;
-
-    task->user_entry =
-        user_entry;
-
-    task->user_esp =
-        user_esp;
-
-    task->user_mode =
-        1;
-
-    task->user_stack_physical =
-        0;
-
-    task->user_stack_virtual =
-        0;
-
-    task->user_stack_size =
-        0;
-
-    task->entry =
-        0;
-
-    task->arg =
-        0;
-
-    task->address_space =
-        space;
-
-    /*
-     * Saved context is an iret frame that enters CPL3.
-     */
-    task->context.esp =
-        prepare_user_stack(
-            task
-        );
-
-    if (task->context.esp == 0) {
-
-        address_space_destroy(
-            task->address_space
-        );
-
-        task->address_space =
-            0;
-
-        kfree(
-            task->stack
-        );
-
-        task->stack =
-            0;
-
-        task->kernel_stack =
-            0;
-
-        task->state =
-            TASK_UNUSED;
-
-        return 0;
-    }
-
-    total_tasks++;
-
-    return task->id;
-}
 
 /*
  * ============================================================
@@ -1282,23 +1002,6 @@ struct registers *task_scheduler_tick(
 
     current_task->state =
         TASK_RUNNING;
-
-    /*
-     * Diagnostic:
-     *
-     * Show that the preemptive scheduler has actually
-     * selected a CPL3 task.
-     */
-    if (
-        current_task->user_mode != 0 &&
-        user_switch_log_count < 20U
-    ) {
-        user_switch_log_count++;
-
-        serial_write(
-            "[sched] switched to Ring 3 task\n"
-        );
-    }
 
 
 
