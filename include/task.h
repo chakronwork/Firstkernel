@@ -58,6 +58,13 @@ struct task
     uint32_t user_mode;
 
     /*
+     * User code backing page.
+     */
+    uint32_t user_code_physical;
+    uint32_t user_code_virtual;
+    uint32_t user_code_size;
+
+    /*
      * User stack backing page.
      */
     uint32_t user_stack_physical;

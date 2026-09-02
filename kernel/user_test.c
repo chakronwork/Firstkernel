@@ -186,6 +186,15 @@ static int setup_user_task(
     }
 
 
+    task->user_code_physical =
+        code_page;
+
+    task->user_code_virtual =
+        code_va;
+
+    task->user_code_size =
+        PAGE_SIZE;
+
     task->user_stack_physical =
         stack_page;
 

@@ -4,6 +4,7 @@
 #include "serial.h"
 #include "gdt.h"
 #include "kmalloc.h"
+#include "pmm.h"
 #include "idt.h"
 
 
@@ -182,6 +183,15 @@ tasks[i].context.esp =
             0;
 
         tasks[i].user_mode =
+            0;
+
+        tasks[i].user_code_physical =
+            0;
+
+        tasks[i].user_code_virtual =
+            0;
+
+        tasks[i].user_code_size =
             0;
 
         tasks[i].user_stack_physical =
@@ -630,6 +640,15 @@ task->stack =
     task->user_mode =
         0;
 
+    task->user_code_physical =
+        0;
+
+    task->user_code_virtual =
+        0;
+
+    task->user_code_size =
+        0;
+
     task->user_stack_physical =
         0;
 
@@ -769,6 +788,15 @@ uint32_t task_create_user(
     task->user_mode =
         1;
 
+    task->user_code_physical =
+        0;
+
+    task->user_code_virtual =
+        0;
+
+    task->user_code_size =
+        0;
+
     task->user_stack_physical =
         0;
 
@@ -827,6 +855,191 @@ uint32_t task_create_user(
 
 /*
  * ============================================================
+ * Reap dead task
+ * ============================================================
+ *
+ * A dead task can only be reclaimed after the scheduler
+ * has switched to another task.
+ *
+ * The current task is therefore never reaped by this pass.
+ */
+static void reap_dead_tasks(void)
+{
+    for (
+        uint32_t i = 0;
+        i < TASK_MAX;
+        ++i
+    ) {
+        struct task *task =
+            &tasks[i];
+
+        if (
+            task->state !=
+            TASK_DEAD
+        ) {
+            continue;
+        }
+
+        /*
+         * Never reclaim the task whose CPU context
+         * is currently active.
+         */
+        if (
+            task ==
+            current_task
+        ) {
+            continue;
+        }
+
+        /*
+         * User code page.
+         */
+        if (
+            task->user_code_physical != 0
+        ) {
+            if (
+                task->address_space != 0 &&
+                task->user_code_virtual != 0
+            ) {
+                address_space_unmap_page(
+                    task->address_space,
+                    task->user_code_virtual
+                );
+            }
+
+            pmm_free_page(
+                task->user_code_physical
+            );
+
+            task->user_code_physical =
+                0;
+        }
+
+        task->user_code_virtual =
+            0;
+
+        task->user_code_size =
+            0;
+
+        /*
+         * User stack page.
+         */
+        if (
+            task->user_stack_physical != 0
+        ) {
+            if (
+                task->address_space != 0 &&
+                task->user_stack_virtual != 0
+            ) {
+                address_space_unmap_page(
+                    task->address_space,
+                    task->user_stack_virtual
+                );
+            }
+
+            pmm_free_page(
+                task->user_stack_physical
+            );
+
+            task->user_stack_physical =
+                0;
+        }
+
+        task->user_stack_virtual =
+            0;
+
+        task->user_stack_size =
+            0;
+
+        /*
+         * Address space.
+         *
+         * At this point the dead task is no longer
+         * the active CR3, so destruction is safe.
+         */
+        if (
+            task->address_space != 0
+        ) {
+            address_space_destroy(
+                task->address_space
+            );
+
+            task->address_space =
+                0;
+        }
+
+        /*
+         * Free task-owned kernel stack.
+         *
+         * Current implementation aliases stack and
+         * kernel_stack, so free the underlying allocation
+         * exactly once.
+         */
+        if (
+            task->stack != 0
+        ) {
+            kfree(
+                task->stack
+            );
+        }
+
+        task->stack =
+            0;
+
+        task->stack_size =
+            0;
+
+        task->kernel_stack =
+            0;
+
+        task->kernel_stack_size =
+            0;
+
+        /*
+         * Clear execution metadata.
+         */
+        task->id =
+            0;
+
+        task->wake_tick =
+            0;
+
+        task->context.esp =
+            0;
+
+        task->user_entry =
+            0;
+
+        task->user_esp =
+            0;
+
+        task->user_mode =
+            0;
+
+        task->entry =
+            0;
+
+        task->arg =
+            0;
+
+        task->state =
+            TASK_UNUSED;
+
+        if (
+            total_tasks > 0
+        ) {
+            total_tasks--;
+        }
+
+        serial_write(
+            "[reaper] task resources reclaimed\n"
+        );
+    }
+}
+
+
+/*
+ * ============================================================
  * Exit current task
  * ============================================================
  *
@@ -836,7 +1049,7 @@ uint32_t task_create_user(
  * The CPU is still executing on this task's kernel stack
  * while the syscall/ISR path is active.
  *
- * Resource reclamation will be handled later by a reaper.
+ * Resource reclamation is performed after a scheduler switch.
  */
 void task_exit(void)
 {
@@ -1305,6 +1518,13 @@ struct registers *task_scheduler_tick(
 
     current_task->state =
         TASK_RUNNING;
+
+    /*
+     * The old task is no longer the active task.
+     * It is now safe to reclaim resources belonging
+     * to DEAD tasks.
+     */
+    reap_dead_tasks();
 
     /*
      * Diagnostic:
