@@ -94,6 +94,14 @@ struct registers *syscall_dispatch(
 
         case SYS_YIELD:
 
+            if (
+                (regs->cs & 0x3U) == 0x3U
+            ) {
+                serial_write(
+                    "[syscall] SYS_YIELD from Ring 3\n"
+                );
+            }
+
             return task_scheduler_tick(
                 regs
             );

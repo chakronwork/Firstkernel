@@ -67,11 +67,18 @@ static const uint8_t user_code_a[] = {
 /*
  * User task B:
  *
- *     nop
+ *     mov eax, SYS_YIELD
+ *     int 0x80
  *     jmp $
  */
 static const uint8_t user_code_b[] = {
-    0x90,
+    /* mov eax, 2 */
+    0xB8, 0x02, 0x00, 0x00, 0x00,
+
+    /* int 0x80 */
+    0xCD, 0x80,
+
+    /* jmp $ */
     0xEB, 0xFE
 };
 
