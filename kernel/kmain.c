@@ -13,6 +13,7 @@
 #include "address_space.h"
 #include "task.h"
 #include "serial.h"
+#include "user_test.h"
 
 
 #define MULTIBOOT_MAGIC 0x2BADB002U
@@ -2853,6 +2854,22 @@ void kmain(
      * The task test will eventually halt the CPU after
      * both tasks have returned.
      */
+    /*
+     * ==================================================
+     * Part 20.3
+     * Ring 3 transition test
+     * ==================================================
+     *
+     * This must run before task_start().
+     * task_start() transfers control to the scheduler
+     * and does not return during normal operation.
+     */
+    if (
+        user_test_init()
+    ) {
+        user_test_start();
+    }
+
     if (
         !task_start()
     ) {
@@ -3027,4 +3044,7 @@ void kmain(
             "\nfirstos> "
         );
     }
+
+
+
 }

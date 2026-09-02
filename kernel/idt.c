@@ -46,6 +46,10 @@ static struct idt_entry idt[256];
 
 static struct idt_ptr idtp;
 
+static int user_test_active = 0;
+
+static volatile uint32_t user_test_interrupts = 0;
+
 
 /*
  * ============================================================
@@ -261,6 +265,32 @@ static struct registers *irq_handler(
         return regs;
     }
 
+    if (regs->int_no == 8U) {
+        serial_write(
+            "\n[FATAL] DOUBLE FAULT\n"
+        );
+
+        serial_write_hex32_line(
+            "EIP:       ",
+            regs->eip
+        );
+
+        serial_write_hex32_line(
+            "CS:        ",
+            regs->cs
+        );
+
+        serial_write_hex32_line(
+            "EFLAGS:    ",
+            regs->eflags
+        );
+
+        for (;;) {
+            __asm__ volatile ("cli");
+            __asm__ volatile ("hlt");
+        }
+    }
+
 
     uint32_t irq =
         regs->int_no - 32U;
@@ -344,6 +374,11 @@ static struct registers *irq_handler(
  *
  *     return another_task_frame;
  */
+void idt_set_user_test_active(int active)
+{
+    user_test_active = active ? 1 : 0;
+}
+
 struct registers *isr_handler(
     struct registers *regs
 )
@@ -355,6 +390,29 @@ struct registers *isr_handler(
         return regs;
     }
 
+
+    /*
+     * ========================================================
+     * Isolated Ring 3 test
+     * ========================================================
+     *
+     * A user-mode int 0x30 must return through the
+     * same interrupt frame without invoking the kernel
+     * scheduler.
+     */
+    if (
+        user_test_active &&
+        (regs->cs & 0x3U) == 0x3U &&
+        regs->int_no == 48U
+    ) {
+        user_test_interrupts++;
+
+        serial_write(
+            "[ok] Ring 3 int 0x30 entered kernel\n"
+        );
+
+        return regs;
+    }
 
     /*
      * ========================================================
@@ -766,7 +824,7 @@ void idt_init(void)
         48,
         (uint32_t)isr48,
         0x08,
-        0x8E
+        0xEE
     );
 
 
