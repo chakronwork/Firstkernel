@@ -109,6 +109,19 @@ void task_yield(void);
 
 
 /*
+ * Terminate the current task.
+ *
+ * The task is marked TASK_DEAD and the scheduler
+ * is responsible for selecting another runnable task.
+ *
+ * Resources are intentionally not freed here because
+ * the current task may still be executing on its
+ * kernel stack.
+ */
+void task_exit(void);
+
+
+/*
  * Block the current task for a number of PIT ticks.
  *
  * ticks == 0 performs a normal yield.

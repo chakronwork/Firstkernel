@@ -827,6 +827,29 @@ uint32_t task_create_user(
 
 /*
  * ============================================================
+ * Exit current task
+ * ============================================================
+ *
+ * Mark the current task as DEAD.
+ *
+ * Do not free the task stack or address space here.
+ * The CPU is still executing on this task's kernel stack
+ * while the syscall/ISR path is active.
+ *
+ * Resource reclamation will be handled later by a reaper.
+ */
+void task_exit(void)
+{
+    if (current_task == 0)
+        return;
+
+    current_task->state =
+        TASK_DEAD;
+}
+
+
+/*
+ * ============================================================
  * Get current task
  * ============================================================
  */

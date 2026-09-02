@@ -5,6 +5,7 @@
 
 #define SYS_WRITE  1U
 #define SYS_YIELD  2U
+#define SYS_EXIT   3U
 
 struct registers *syscall_dispatch(
     struct registers *regs

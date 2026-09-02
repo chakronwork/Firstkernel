@@ -107,6 +107,32 @@ struct registers *syscall_dispatch(
             );
 
 
+        case SYS_EXIT:
+
+            if (
+                (regs->cs & 0x3U) != 0x3U
+            ) {
+                regs->eax =
+                    (uint32_t)-1;
+
+                return regs;
+            }
+
+            serial_write(
+                "[syscall] SYS_EXIT from Ring 3\n"
+            );
+
+            task_exit();
+
+            /*
+             * Current task is now TASK_DEAD.
+             * The scheduler must select another task.
+             */
+            return task_scheduler_tick(
+                regs
+            );
+
+
         default:
 
             regs->eax =

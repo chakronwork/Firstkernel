@@ -60,7 +60,19 @@ static const uint8_t user_code_a[] = {
     /* int 0x80 */
     0xCD, 0x80,
 
-    /* jmp $ */
+    /*
+     * mov eax, SYS_EXIT
+     */
+    0xB8, 0x03, 0x00, 0x00, 0x00,
+
+    /*
+     * int 0x80
+     */
+    0xCD, 0x80,
+
+    /*
+     * Should never be reached after SYS_EXIT.
+     */
     0xEB, 0xFE
 };
 
