@@ -6,7 +6,6 @@
 
 
 #include "timer.h"
-#include "tss.h"
 /*
  * ============================================================
  * External assembly
@@ -163,12 +162,6 @@ tasks[i].context.esp =
             0;
 
         tasks[i].stack_size =
-            0;
-
-        tasks[i].kernel_stack =
-            0;
-
-        tasks[i].kernel_stack_size =
             0;
 
         tasks[i].entry =
@@ -447,17 +440,6 @@ uint32_t task_create(
             TASK_STACK_SIZE
         );
 
-    /*
-     * Every task owns an address space.
-     */
-    struct address_space *space =
-        address_space_create();
-
-    if (space == 0) {
-        kfree(stack);
-        return 0;
-    }
-
 
     if (stack == 0)
         return 0;
@@ -481,19 +463,6 @@ task->stack =
     task->stack_size =
         TASK_STACK_SIZE;
 
-    /*
-     * For the current task model, the task-private stack
-     * is also its Ring 0 kernel entry stack.
-     *
-     * A future user task will additionally have a separate
-     * user-mode stack.
-     */
-    task->kernel_stack =
-        task->stack;
-
-    task->kernel_stack_size =
-        TASK_STACK_SIZE;
-
     task->entry =
         entry;
 
@@ -501,7 +470,7 @@ task->stack =
         arg;
 
     task->address_space =
-        space;
+        0;
 
 
     /*
@@ -522,13 +491,6 @@ task->stack =
         );
 
         task->stack =
-            0;
-
-        address_space_destroy(
-            task->address_space
-        );
-
-        task->address_space =
             0;
 
         task->state =
@@ -958,51 +920,13 @@ struct registers *task_scheduler_tick(
      * ========================================================
      * Activate next task
      * ========================================================
-     *
-     * Switch address space before activating the task.
-     */
-    if (
-        next->address_space == 0
-    ) {
-        return regs;
-    }
-
-    if (
-        !address_space_switch(
-            next->address_space
-        )
-    ) {
-        return regs;
-    }
-
-    /*
-     * Update TSS.ESP0 for the incoming task.
-     */
-    if (
-        next->kernel_stack == 0 ||
-        next->kernel_stack_size == 0
-    ) {
-        return regs;
-    }
-
-    tss_set_kernel_stack(
-        (uint32_t)(
-            uintptr_t
-        )(
-            next->kernel_stack +
-            next->kernel_stack_size
-        )
-    );
-
-    /*
-     * Activate task after CR3 and TSS stack switch.
      */
     current_task =
         next;
 
+
     current_task->state =
         TASK_RUNNING;
-
 
 
     /*
@@ -1131,44 +1055,6 @@ int task_start(void)
     /*
      * Activate first task.
      */
-    /*
-     * Load the first task's address space before
-     * entering its saved CPU context.
-     */
-    if (
-        first->address_space == 0
-    ) {
-        return 0;
-    }
-
-    if (
-        !address_space_switch(
-            first->address_space
-        )
-    ) {
-        return 0;
-    }
-
-    /*
-     * TSS.ESP0 must point to the kernel stack belonging
-     * to the task that is about to run.
-     */
-    if (
-        first->kernel_stack == 0 ||
-        first->kernel_stack_size == 0
-    ) {
-        return 0;
-    }
-
-    tss_set_kernel_stack(
-        (uint32_t)(
-            uintptr_t
-        )(
-            first->kernel_stack +
-            first->kernel_stack_size
-        )
-    );
-
     current_task =
         first;
 

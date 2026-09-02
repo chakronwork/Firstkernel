@@ -41,6 +41,15 @@ struct task
     uint8_t *stack;
     uint32_t stack_size;
 
+    /*
+     * Dedicated kernel entry stack.
+     *
+     * TSS.ESP0 points to the top of this stack while
+     * this task is executing in user mode.
+     */
+    uint8_t *kernel_stack;
+    uint32_t kernel_stack_size;
+
     void (*entry)(
         void *arg
     );
