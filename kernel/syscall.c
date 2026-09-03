@@ -4,6 +4,7 @@
 #include "serial.h"
 #include "task.h"
 #include "uaccess.h"
+#include "ipc.h"
 
 #define SYSCALL_WRITE_MAX 256U
 
@@ -28,10 +29,6 @@ struct registers *syscall_dispatch(
                 SYSCALL_WRITE_MAX
             ];
 
-            /*
-             * Prevent an oversized userspace request
-             * from consuming excessive kernel stack.
-             */
             if (
                 length == 0U ||
                 length > SYSCALL_WRITE_MAX
@@ -42,10 +39,6 @@ struct registers *syscall_dispatch(
                 return regs;
             }
 
-            /*
-             * Only a Ring 3 task may use the user
-             * memory syscall interface.
-             */
             if (
                 (regs->cs & 0x3U) != 0x3U
             ) {
@@ -82,9 +75,6 @@ struct registers *syscall_dispatch(
                 );
             }
 
-            /*
-             * Return number of bytes written.
-             */
             regs->eax =
                 length;
 
@@ -124,10 +114,6 @@ struct registers *syscall_dispatch(
 
             task_exit();
 
-            /*
-             * Current task is now TASK_DEAD.
-             * The scheduler must select another task.
-             */
             return task_scheduler_tick(
                 regs
             );
@@ -138,9 +124,6 @@ struct registers *syscall_dispatch(
             uint32_t ticks =
                 regs->ebx;
 
-            /*
-             * Only Ring 3 may request user sleep.
-             */
             if (
                 (regs->cs & 0x3U) != 0x3U
             ) {
@@ -150,21 +133,106 @@ struct registers *syscall_dispatch(
                 return regs;
             }
 
-            /*
-             * Zero ticks is intentionally treated
-             * as a normal voluntary yield by task_sleep().
-             */
             serial_write(
                 "[syscall] SYS_SLEEP from Ring 3\n"
             );
 
             task_sleep(ticks);
 
-            /*
-             * task_sleep() may switch tasks immediately.
-             * The scheduler will restore the appropriate
-             * interrupt frame.
-             */
+            return regs;
+        }
+
+
+        case SYS_IPC_SEND:
+        {
+            uint32_t receiver_id =
+                regs->ebx;
+
+            uint32_t user_buffer =
+                regs->ecx;
+
+            uint32_t length =
+                regs->edx;
+
+            if (
+                (regs->cs & 0x3U) != 0x3U
+            ) {
+                regs->eax =
+                    (uint32_t)-1;
+
+                return regs;
+            }
+
+            int result =
+                ipc_send(
+                    receiver_id,
+                    (const void *)(uintptr_t)user_buffer,
+                    length
+                );
+
+            if (result <= 0) {
+                serial_write(
+                    "[syscall] SYS_IPC_SEND failed\n"
+                );
+
+                regs->eax =
+                    (uint32_t)-1;
+
+                return regs;
+            }
+
+            serial_write(
+                "[syscall] SYS_IPC_SEND ok\n"
+            );
+
+            regs->eax =
+                (uint32_t)result;
+
+            return regs;
+        }
+
+
+        case SYS_IPC_RECV:
+        {
+            uint32_t user_buffer =
+                regs->ebx;
+
+            uint32_t capacity =
+                regs->ecx;
+
+            if (
+                (regs->cs & 0x3U) != 0x3U
+            ) {
+                regs->eax =
+                    (uint32_t)-1;
+
+                return regs;
+            }
+
+            int result =
+                ipc_receive(
+                    (void *)(uintptr_t)user_buffer,
+                    capacity
+                );
+
+            if (result <= 0) {
+                serial_write(
+                    "[syscall] SYS_IPC_RECV empty/failed\n"
+                );
+
+                regs->eax =
+                    (uint32_t)-1;
+
+                return regs;
+            }
+
+            serial_write(
+                "[syscall] SYS_IPC_RECV ok\n"
+            );
+
+            regs->eax =
+                (uint32_t)result;
+
             return regs;
         }
 

@@ -6,3 +6,4 @@ firstpatch.py
 all_diffs.txt
 *.bak
 *.bak.*
+cleanup_firstkernel.sh

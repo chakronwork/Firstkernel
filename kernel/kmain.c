@@ -16,6 +16,7 @@
 #include "task.h"
 #include "serial.h"
 #include "user_test.h"
+#include "ipc.h"
 
 
 #define MULTIBOOT_MAGIC 0x2BADB002U
@@ -2834,6 +2835,26 @@ void kmain(uint32_t magic, uint32_t mbi_addr)
 
     serial_write(
         "[ ok ] task subsystem initialized\n"
+    );
+
+
+    /*
+     * ==================================================
+     * IPC
+     * ==================================================
+     */
+    if (
+        !ipc_init()
+    ) {
+        serial_write(
+            "[fatal] IPC initialization failed\n"
+        );
+
+        halt_cpu();
+    }
+
+    serial_write(
+        "[ ok ] IPC subsystem initialized\n"
     );
 
 

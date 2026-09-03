@@ -85,14 +85,55 @@ static const uint8_t user_code_a[] = {
  *     jmp $
  */
 static const uint8_t user_code_b[] = {
-    /* mov eax, 2 */
-    0xB8, 0x02, 0x00, 0x00, 0x00,
+    /*
+     * SYS_IPC_RECV
+     *
+     * Receive into:
+     *
+     *     0x40003100
+     *
+     * Capacity:
+     *
+     *     64 bytes
+     */
+    0xB8, 0x06, 0x00, 0x00, 0x00,       /* mov eax, 6 */
+    0xBB, 0x00, 0x31, 0x00, 0x40,       /* mov ebx, 0x40003100 */
+    0xB9, 0x40, 0x00, 0x00, 0x00,       /* mov ecx, 64 */
+    0xCD, 0x80,                          /* int 0x80 */
 
-    /* int 0x80 */
-    0xCD, 0x80,
+    /*
+     * Receive returns:
+     *
+     *     EAX >= 0 : bytes received
+     *     EAX = -1  : no message yet
+     *
+     * Retry with SYS_YIELD when queue is empty.
+     */
+    0x85, 0xC0,                          /* test eax, eax */
+    0x78, 0xEA,                          /* js retry */
 
-    /* jmp $ */
-    0xEB, 0xFE
+    /*
+     * Write exactly the number of received bytes.
+     */
+    0x89, 0xC1,                          /* mov ecx, eax */
+    0xB8, 0x01, 0x00, 0x00, 0x00,       /* mov eax, 1 */
+    0xBB, 0x00, 0x31, 0x00, 0x40,       /* mov ebx, 0x40003100 */
+    0xCD, 0x80,                          /* int 0x80 */
+
+    /*
+     * Exit.
+     */
+    0xB8, 0x03, 0x00, 0x00, 0x00,       /* mov eax, 3 */
+    0xCD, 0x80,                          /* int 0x80 */
+
+    /*
+     * retry:
+     *
+     * SYS_YIELD
+     */
+    0xB8, 0x02, 0x00, 0x00, 0x00,       /* mov eax, 2 */
+    0xCD, 0x80,                          /* int 0x80 */
+    0xEB, 0xD6                           /* jmp retry */
 };
 
 static int setup_user_task(

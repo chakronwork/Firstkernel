@@ -1121,7 +1121,8 @@ static void reap_dead_tasks(void)
          * its slot is TASK_UNUSED.
          */
         if (
-            reuse_test_triggered == 0
+            reuse_test_triggered == 0 &&
+            task->user_mode == 0
         ) {
             reuse_test_triggered =
                 1;

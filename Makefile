@@ -9,7 +9,7 @@ OBJS = boot/boot.o \
        kernel/console.o kernel/serial.o kernel/vga.o \
        kernel/pmm.o kernel/kmalloc.o kernel/paging.o kernel/page_fault.o kernel/vmm.o \
        kernel/address_space.o kernel/task.o kernel/task_asm.o \
-       kernel/syscall.o kernel/uaccess.o kernel/initrd.o \
+       kernel/syscall.o kernel/ipc.o kernel/uaccess.o kernel/initrd.o \
        kernel/user_test.o kernel/user_mode.o kernel/kmain.o
 
 BIN = firstos.bin

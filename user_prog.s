@@ -4,30 +4,28 @@
 
 _start:
     /*
-     * Test 1: valid user buffer
+     * Send a message from Ring 3 Task A to Task B.
+     *
+     * Current initial Ring 3 task IDs are:
+     *
+     *     Task A = 4
+     *     Task B = 5
+     *
+     * SYS_IPC_SEND:
+     *
+     *     EAX = 5
+     *     EBX = receiver task ID
+     *     ECX = user buffer
+     *     EDX = length
      */
-    mov $1, %eax
-    mov $msg_before, %ebx
-    mov $31, %ecx
+    mov $5, %eax
+    mov $5, %ebx
+    mov $msg_ipc, %ecx
+    mov $24, %edx
     int $0x80
 
     /*
-     * Test 2: sleep for 10 PIT ticks
-     */
-    mov $4, %eax
-    mov $10, %ebx
-    int $0x80
-
-    /*
-     * Execution should resume after wakeup.
-     */
-    mov $1, %eax
-    mov $msg_after, %ebx
-    mov $31, %ecx
-    int $0x80
-
-    /*
-     * Exit cleanly.
+     * Exit after successful send.
      */
     mov $3, %eax
     int $0x80
@@ -35,8 +33,5 @@ _start:
 1:
     jmp 1b
 
-msg_before:
-    .ascii "before SYS_SLEEP: PASS\n"
-
-msg_after:
-    .ascii "after SYS_SLEEP: PASS\n"
+msg_ipc:
+    .ascii "IPC message from Task A\n"
