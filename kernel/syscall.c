@@ -133,6 +133,42 @@ struct registers *syscall_dispatch(
             );
 
 
+        case SYS_SLEEP:
+        {
+            uint32_t ticks =
+                regs->ebx;
+
+            /*
+             * Only Ring 3 may request user sleep.
+             */
+            if (
+                (regs->cs & 0x3U) != 0x3U
+            ) {
+                regs->eax =
+                    (uint32_t)-1;
+
+                return regs;
+            }
+
+            /*
+             * Zero ticks is intentionally treated
+             * as a normal voluntary yield by task_sleep().
+             */
+            serial_write(
+                "[syscall] SYS_SLEEP from Ring 3\n"
+            );
+
+            task_sleep(ticks);
+
+            /*
+             * task_sleep() may switch tasks immediately.
+             * The scheduler will restore the appropriate
+             * interrupt frame.
+             */
+            return regs;
+        }
+
+
         default:
 
             regs->eax =

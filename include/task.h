@@ -8,7 +8,7 @@
 
 
 #define TASK_MAX 32U
-#define TASK_STACK_SIZE 4096U
+#define TASK_STACK_SIZE 4000U
 
 
 #define TASK_UNUSED  0U

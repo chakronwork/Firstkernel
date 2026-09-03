@@ -729,34 +729,63 @@ uint32_t task_create_user(
     uint32_t user_esp
 )
 {
-    if (user_entry == 0)
-        return 0;
+    serial_write(
+        "[diag] task_create_user begin\n"
+    );
 
-    if (user_esp == 0)
+    if (user_entry == 0) {
+        serial_write(
+            "[fail] task_create_user: user_entry=0\n"
+        );
         return 0;
+    }
 
-    if (total_tasks >= TASK_MAX)
+    if (user_esp == 0) {
+        serial_write(
+            "[fail] task_create_user: user_esp=0\n"
+        );
         return 0;
+    }
+
+    if (total_tasks >= TASK_MAX) {
+        serial_write(
+            "[fail] task_create_user: TASK_MAX reached\n"
+        );
+        return 0;
+    }
 
     struct task *task =
         find_free_task();
 
-    if (task == 0)
+    if (task == 0) {
+        serial_write(
+            "[fail] task_create_user: no free task slot\n"
+        );
         return 0;
+    }
 
     uint8_t *stack =
         (uint8_t *)kmalloc(
             TASK_STACK_SIZE
         );
 
-    if (stack == 0)
+    if (stack == 0) {
+        serial_write(
+            "[fail] task_create_user: kmalloc stack failed\n"
+        );
         return 0;
+    }
 
     struct address_space *space =
         address_space_create();
 
     if (space == 0) {
+        serial_write(
+            "[fail] task_create_user: address_space_create failed\n"
+        );
+
         kfree(stack);
+
         return 0;
     }
 
@@ -817,15 +846,15 @@ uint32_t task_create_user(
     task->address_space =
         space;
 
-    /*
-     * Saved context is an iret frame that enters CPL3.
-     */
     task->context.esp =
         prepare_user_stack(
             task
         );
 
     if (task->context.esp == 0) {
+        serial_write(
+            "[fail] task_create_user: prepare_user_stack failed\n"
+        );
 
         address_space_destroy(
             task->address_space
@@ -851,6 +880,10 @@ uint32_t task_create_user(
     }
 
     total_tasks++;
+
+    serial_write(
+        "[ ok ] task_create_user succeeded\n"
+    );
 
     return task->id;
 }
