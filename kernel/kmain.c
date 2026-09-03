@@ -1,3 +1,5 @@
+#include "multiboot.h"
+#include "initrd.h"
 #include <stdint.h>
 
 #include "console.h"
@@ -591,11 +593,10 @@ static void task_idle_entry(
  * Kernel entry point
  * ============================================================
  */
-void kmain(
-    uint32_t magic,
-    uint32_t mbi_addr
-)
+void kmain(uint32_t magic, uint32_t mbi_addr)
 {
+    
+
     char command[
         COMMAND_BUFFER_SIZE
     ];

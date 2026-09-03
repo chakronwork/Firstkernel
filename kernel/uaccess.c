@@ -1,155 +1,53 @@
 #include <stdint.h>
-
+#include <stddef.h>
 #include "uaccess.h"
-#include "address_space.h"
-#include "paging.h"
-#include "task.h"
 
-int user_range_valid(
-    uint32_t virtual_address,
-    uint32_t length
-)
+int uaccess_verify_read(const void *ptr, size_t size)
 {
-    struct task *task =
-        task_current();
+    uintptr_t start = (uintptr_t)ptr;
+    uintptr_t end = start + size;
 
-    if (task == 0)
-        return 0;
-
-    if (task->address_space == 0)
-        return 0;
-
-    /*
-     * A zero-length access is valid as long as the
-     * starting address itself is inside user space.
-     */
-    if (length == 0U) {
-
-        if (
-            virtual_address <
-            ADDRESS_SPACE_USER_START
-        ) {
-            return 0;
-        }
-
-        if (
-            virtual_address >=
-            ADDRESS_SPACE_USER_END
-        ) {
-            return 0;
-        }
-
+    if (size == 0)
         return 1;
-    }
 
-    /*
-     * Detect uint32_t wraparound.
-     */
-    uint32_t end =
-        virtual_address +
-        length -
-        1U;
-
-    if (end < virtual_address)
+    if (end < start)
         return 0;
 
-    /*
-     * Entire range must remain in user virtual space.
-     */
-    if (
-        virtual_address <
-        ADDRESS_SPACE_USER_START
-    ) {
+    if (start < USER_SPACE_START || end > USER_SPACE_END)
         return 0;
-    }
-
-    if (
-        end >=
-        ADDRESS_SPACE_USER_END
-    ) {
-        return 0;
-    }
-
-    /*
-     * Check every page touched by the range.
-     */
-    uint32_t page =
-        virtual_address &
-        ~(PAGE_SIZE - 1U);
-
-    uint32_t last_page =
-        end &
-        ~(PAGE_SIZE - 1U);
-
-    for (;;) {
-
-        uint32_t physical = 0;
-        uint32_t flags = 0;
-
-        if (
-            !address_space_get_page(
-                task->address_space,
-                page,
-                &physical,
-                &flags
-            )
-        ) {
-            return 0;
-        }
-
-        if (
-            (flags & PAGE_PRESENT) == 0
-        ) {
-            return 0;
-        }
-
-        if (
-            (flags & PAGE_USER) == 0
-        ) {
-            return 0;
-        }
-
-        if (page == last_page)
-            break;
-
-        page += PAGE_SIZE;
-    }
 
     return 1;
 }
 
-
-int copy_from_user(
-    void *destination,
-    uint32_t user_address,
-    uint32_t length
-)
+int uaccess_verify_write(void *ptr, size_t size)
 {
-    if (destination == 0)
+    return uaccess_verify_read((const void *)ptr, size);
+}
+
+int copy_from_user(void *dst, const void *src, size_t size)
+{
+    if (!uaccess_verify_read(src, size))
         return 0;
 
-    if (
-        !user_range_valid(
-            user_address,
-            length
-        )
-    ) {
+    uint8_t *d = (uint8_t *)dst;
+    const uint8_t *s = (const uint8_t *)src;
+
+    for (size_t i = 0; i < size; ++i)
+        d[i] = s[i];
+
+    return 1;
+}
+
+int copy_to_user(void *dst, const void *src, size_t size)
+{
+    if (!uaccess_verify_write(dst, size))
         return 0;
-    }
 
-    uint8_t *dst =
-        (uint8_t *)destination;
+    uint8_t *d = (uint8_t *)dst;
+    const uint8_t *s = (const uint8_t *)src;
 
-    const uint8_t *src =
-        (const uint8_t *)(uintptr_t)user_address;
-
-    for (
-        uint32_t i = 0;
-        i < length;
-        ++i
-    ) {
-        dst[i] = src[i];
-    }
+    for (size_t i = 0; i < size; ++i)
+        d[i] = s[i];
 
     return 1;
 }

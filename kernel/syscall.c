@@ -58,7 +58,7 @@ struct registers *syscall_dispatch(
             if (
                 !copy_from_user(
                     buffer,
-                    user_buffer,
+                    (const void *)(uintptr_t)(const void *)(uintptr_t)user_buffer,
                     length
                 )
             ) {

@@ -1,17 +1,15 @@
-#ifndef UACCESS_H
-#define UACCESS_H
+#ifndef FIRSTOS_UACCESS_H
+#define FIRSTOS_UACCESS_H
 
 #include <stdint.h>
+#include <stddef.h>
 
-int user_range_valid(
-    uint32_t virtual_address,
-    uint32_t length
-);
+#define USER_SPACE_START 0x40000000U
+#define USER_SPACE_END   0x80000000U
 
-int copy_from_user(
-    void *destination,
-    uint32_t user_address,
-    uint32_t length
-);
+int uaccess_verify_read(const void *ptr, size_t size);
+int uaccess_verify_write(void *ptr, size_t size);
+int copy_from_user(void *dst, const void *src, size_t size);
+int copy_to_user(void *dst, const void *src, size_t size);
 
-#endif /* UACCESS_H */
+#endif

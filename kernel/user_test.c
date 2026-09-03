@@ -1,3 +1,4 @@
+#include "initrd.h"
 #include <stdint.h>
 
 #include "user_test.h"
@@ -304,13 +305,24 @@ int user_test_init(void)
         return 0;
     }
 
+    uint32_t mod_start = initrd_get_start();
+    uint32_t mod_size = initrd_get_size();
+
+    const uint8_t *prog_code = user_code_a;
+    uint32_t prog_size = sizeof(user_code_a);
+
+    if (mod_size > 0) {
+        prog_code = (const uint8_t *)(uintptr_t)mod_start;
+        prog_size = (mod_size > PAGE_SIZE) ? PAGE_SIZE : mod_size;
+    }
+
     if (
         !setup_user_task(
             task_a,
             USER_CODE_A,
             USER_STACK_A,
-            user_code_a,
-            sizeof(user_code_a),
+            prog_code,
+            prog_size,
             USER_STACK_TOP_A,
             'A'
         )

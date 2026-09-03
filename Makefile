@@ -1,163 +1,61 @@
-CC := gcc
-AS := gcc
+CC = gcc
+CFLAGS = -std=gnu11 -m32 -ffreestanding -O2 -Wall -Wextra -Iinclude -fno-stack-protector -fno-pie -mno-red-zone
+LDFLAGS = -m32 -ffreestanding -O2 -nostdlib -no-pie -Wl,--build-id=none -Wl,-z,noexecstack -T linker.ld
 
+OBJS = boot/boot.o \
+       kernel/gdt.o kernel/gdt_asm.o \
+       kernel/idt.o kernel/idt_asm.o \
+       kernel/pic.o kernel/timer.o kernel/keyboard.o \
+       kernel/console.o kernel/serial.o kernel/vga.o \
+       kernel/pmm.o kernel/kmalloc.o kernel/paging.o kernel/page_fault.o kernel/vmm.o \
+       kernel/address_space.o kernel/task.o kernel/task_asm.o \
+       kernel/syscall.o kernel/uaccess.o kernel/initrd.o \
+       kernel/user_test.o kernel/user_mode.o kernel/kmain.o
 
-CFLAGS := -std=gnu11 -m32 -ffreestanding -O2 -Wall -Wextra -Iinclude \
-          -fno-stack-protector \
-          -fno-pie \
-          -mno-red-zone
+BIN = firstos.bin
+ISO = firstos.iso
 
+all: $(BIN)
 
-LDFLAGS := -m32 -ffreestanding -O2 -nostdlib -no-pie \
-           -Wl,--build-id=none \
-           -Wl,-z,noexecstack \
-           -T linker.ld
-
-
-OBJS := \
-    boot/boot.o \
-    kernel/gdt.o \
-    kernel/gdt_asm.o \
-    kernel/idt.o \
-    kernel/idt_asm.o \
-    kernel/pic.o \
-    kernel/timer.o \
-    kernel/keyboard.o \
-    kernel/console.o \
-    kernel/serial.o \
-    kernel/pmm.o \
-    kernel/kmalloc.o \
-    kernel/paging.o \
-    kernel/page_fault.o \
-    kernel/vmm.o \
-    kernel/address_space.o \
-    kernel/task.o \
-    kernel/task_asm.o \
-    kernel/syscall.o \
-    kernel/uaccess.o \
-    kernel/user_test.o \
-    kernel/user_mode.o \
-    kernel/kmain.o \
-    kernel/vga.o
-
-
-all: firstos.bin
-
+$(BIN): $(OBJS)
+	$(CC) $(LDFLAGS) $(OBJS) -o $(BIN) -lgcc
 
 boot/boot.o: boot/boot.s
-	$(AS) $(CFLAGS) -c $< -o $@
-
-
-kernel/gdt.o: kernel/gdt.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
+	$(CC) $(CFLAGS) -c boot/boot.s -o boot/boot.o
 
 kernel/gdt_asm.o: kernel/gdt.s
-	$(AS) $(CFLAGS) -c $< -o $@
-
-
-kernel/idt.o: kernel/idt.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
+	$(CC) $(CFLAGS) -c kernel/gdt.s -o kernel/gdt_asm.o
 
 kernel/idt_asm.o: kernel/idt.s
-	$(AS) $(CFLAGS) -c $< -o $@
-
-
-kernel/pic.o: kernel/pic.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-
-kernel/timer.o: kernel/timer.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-
-kernel/keyboard.o: kernel/keyboard.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-
-kernel/console.o: kernel/console.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-
-kernel/serial.o: kernel/serial.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-
-kernel/pmm.o: kernel/pmm.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-
-kernel/kmalloc.o: kernel/kmalloc.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-
-kernel/paging.o: kernel/paging.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-
-kernel/page_fault.o: kernel/page_fault.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-
-kernel/vmm.o: kernel/vmm.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-
-kernel/address_space.o: kernel/address_space.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-
-kernel/task.o: kernel/task.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
+	$(CC) $(CFLAGS) -c kernel/idt.s -o kernel/idt_asm.o
 
 kernel/task_asm.o: kernel/task_asm.s
-	$(AS) $(CFLAGS) -c $< -o $@
-
-kernel/syscall.o: kernel/syscall.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-
-kernel/uaccess.o: kernel/uaccess.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-
-kernel/user_test.o: kernel/user_test.c
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -c kernel/task_asm.s -o kernel/task_asm.o
 
 kernel/user_mode.o: kernel/user_mode.s
-	$(AS) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -c kernel/user_mode.s -o kernel/user_mode.o
 
-
-kernel/kmain.o: kernel/kmain.c
+kernel/%.o: kernel/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+initrd.img: user_prog.s
+	$(CC) -m32 -ffreestanding -nostdlib -no-pie -e _start -Wl,-Ttext=0x40000000 user_prog.s -o user_prog.elf
+	objcopy -O binary --only-section=.text user_prog.elf initrd.img
 
-kernel/vga.o: kernel/vga.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-
-firstos.bin: $(OBJS) linker.ld
-	$(CC) $(LDFLAGS) $(OBJS) -o $@ -lgcc
-
-
-run: firstos.bin
-	qemu-system-i386 -kernel firstos.bin -m 128M -serial stdio
-
-
-iso: firstos.bin
+iso: $(BIN) initrd.img
 	mkdir -p iso/boot/grub
-	cp firstos.bin iso/boot/
-
-	printf 'menuentry "firstOS" {\\n  multiboot /boot/firstos.bin\\n}\\n' \
-		> iso/boot/grub/grub.cfg
-
-	grub-mkrescue -o firstos.iso iso
-
+	cp $(BIN) iso/boot/
+	cp initrd.img iso/boot/
+	echo "set default=0" > iso/boot/grub/grub.cfg
+	echo "set timeout=0" >> iso/boot/grub/grub.cfg
+	echo 'menuentry "firstOS" {' >> iso/boot/grub/grub.cfg
+	echo '    multiboot /boot/$(BIN)' >> iso/boot/grub/grub.cfg
+	echo '    module /boot/initrd.img' >> iso/boot/grub/grub.cfg
+	echo '    boot' >> iso/boot/grub/grub.cfg
+	echo '}' >> iso/boot/grub/grub.cfg
+	grub-mkrescue -o $(ISO) iso
 
 clean:
-	rm -rf $(OBJS) firstos.bin firstos.iso iso
+	rm -rf $(OBJS) $(BIN) $(ISO) user_prog.elf initrd.img iso
 
-
-.PHONY: all run iso clean
+.PHONY: all iso clean
