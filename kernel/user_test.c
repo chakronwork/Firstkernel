@@ -260,6 +260,9 @@ static int setup_user_task(
     task->user_esp =
         stack_top;
 
+    task->state =
+        TASK_READY;
+
     return 1;
 }
 

@@ -764,7 +764,7 @@ uint32_t task_create_user(
         next_task_id++;
 
     task->state =
-        TASK_READY;
+        TASK_BLOCKED;
 
     task->wake_tick =
         0;
@@ -884,6 +884,9 @@ static uint32_t reuse_test_task_id =
  * Free-page count before replacement task creation.
  */
 static uint32_t reuse_test_baseline_free_pages =
+    0;
+
+static uint32_t reuse_test_baseline_total_tasks =
     0;
 
 /*
@@ -1108,7 +1111,7 @@ static void reap_dead_tasks(void)
              * pre-create state.
              */
             if (
-                total_tasks != 4U
+                total_tasks != reuse_test_baseline_total_tasks
             ) {
                 serial_write(
                     "[reuse-test] FAIL: total_tasks did not recover\n"
@@ -2009,6 +2012,9 @@ static uint32_t task_reuse_test(void)
 
     reuse_test_baseline_free_pages =
         pmm_get_free_pages();
+
+    reuse_test_baseline_total_tasks =
+        before_count;
 
     serial_write(
         "[reuse-test] before total_tasks="
