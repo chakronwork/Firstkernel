@@ -50,6 +50,19 @@ struct multiboot_info {
 
 
 /*
+ * Multiboot1 module descriptor.
+ *
+ * GRUB stores each loaded module's physical range here.
+ */
+struct multiboot_mod_list {
+    uint32_t mod_start;
+    uint32_t mod_end;
+    uint32_t cmdline;
+    uint32_t pad;
+};
+
+
+/*
  * Multiboot1 memory map entry.
  */
 struct multiboot_mmap_entry {
@@ -488,6 +501,28 @@ static void bitmap_init(
         (uint32_t)&__kernel_start,
         (uint32_t)&__kernel_end
     );
+
+
+    /*
+     * Reserve all Multiboot modules.
+     *
+     * GRUB-loaded files such as initrd.img live in
+     * physical memory outside the kernel image. They must
+     * remain untouched while the kernel is running.
+     */
+    if (mbi->mods_count != 0 && mbi->mods_addr != 0) {
+        struct multiboot_mod_list *mods =
+            (struct multiboot_mod_list *)mbi->mods_addr;
+
+        for (uint32_t i = 0; i < mbi->mods_count; ++i) {
+            if (mods[i].mod_end > mods[i].mod_start) {
+                reserve_range(
+                    mods[i].mod_start,
+                    mods[i].mod_end
+                );
+            }
+        }
+    }
 
 
     /*

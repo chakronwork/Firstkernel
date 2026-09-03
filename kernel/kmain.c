@@ -123,6 +123,130 @@ static int command_is_pf(
 
 /*
  * ============================================================
+ * Initialize initrd from Multiboot modules
+ * ============================================================
+ *
+ * firstOS currently treats the first Multiboot module
+ * as the initrd image.
+ *
+ * Multiboot info:
+ *
+ *     flags bit 3 = modules information is valid
+ *     mods_count  = number of modules
+ *     mods_addr   = physical address of module list
+ */
+static void initrd_from_multiboot(
+    uint32_t mbi_addr
+)
+{
+    struct multiboot_info *mbi =
+        (struct multiboot_info *)(uintptr_t)mbi_addr;
+
+    if (mbi == 0) {
+        serial_write(
+            "[warn] multiboot info pointer is null\n"
+        );
+
+        return;
+    }
+
+
+    /*
+     * Multiboot must report valid module information.
+     */
+    if (
+        (mbi->flags & MULTIBOOT_INFO_MODS) == 0
+    ) {
+        serial_write(
+            "[warn] multiboot initrd module information unavailable\n"
+        );
+
+        return;
+    }
+
+
+    if (mbi->mods_count == 0) {
+        serial_write(
+            "[warn] no multiboot modules found\n"
+        );
+
+        return;
+    }
+
+
+    if (mbi->mods_addr == 0) {
+        serial_write(
+            "[warn] multiboot module list address is null\n"
+        );
+
+        return;
+    }
+
+
+    /*
+     * The first module is the initrd.
+     */
+    struct multiboot_mod_list *mods =
+        (struct multiboot_mod_list *)(uintptr_t)
+        mbi->mods_addr;
+
+    uint32_t start =
+        mods[0].mod_start;
+
+    uint32_t end =
+        mods[0].mod_end;
+
+
+    if (start == 0 || end <= start) {
+        serial_write(
+            "[warn] invalid initrd module range\n"
+        );
+
+        return;
+    }
+
+
+    /*
+     * Register the initrd.
+     */
+    initrd_init(
+        start,
+        end
+    );
+
+
+    serial_write(
+        "[ ok ] initrd module loaded\n"
+    );
+
+    serial_write(
+        "[info] initrd start: 0x"
+    );
+
+    serial_write_hex32(
+        start
+    );
+
+    serial_write(
+        "\n"
+    );
+
+    serial_write(
+        "[info] initrd size:  "
+    );
+
+    serial_write_dec(
+        end - start
+    );
+
+    serial_write(
+        "\n"
+    );
+}
+
+
+/*
+ * ============================================================
  * Heap stress state
  * ============================================================
  */
@@ -690,6 +814,19 @@ void kmain(uint32_t magic, uint32_t mbi_addr)
 
     serial_write(
         "[ ok ] kernel console ready\n"
+    );
+
+
+    /*
+     * ==================================================
+     * Multiboot modules / initrd
+     * ==================================================
+     *
+     * GRUB loads initrd.img as the first Multiboot module.
+     * Register it before the Ring 3 test creates user tasks.
+     */
+    initrd_from_multiboot(
+        mbi_addr
     );
 
 

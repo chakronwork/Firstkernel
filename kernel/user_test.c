@@ -242,6 +242,89 @@ static int setup_user_task(
     task->user_stack_size =
         PAGE_SIZE;
 
+    /*
+     * ========================================================
+     * Ring 3 code mapping diagnostic
+     * ========================================================
+     */
+    {
+        uint32_t mapped_physical = 0;
+        uint32_t mapped_flags = 0;
+
+        if (
+            !address_space_get_page(
+                task->address_space,
+                code_va,
+                &mapped_physical,
+                &mapped_flags
+            )
+        ) {
+            serial_write(
+                "[fail] Ring 3 code mapping query\n"
+            );
+
+            return 0;
+        }
+
+        serial_write(
+            "[diag] Ring 3 code mapping present\n"
+        );
+
+        serial_write(
+            "[diag] code physical: 0x"
+        );
+
+        serial_write_hex32(
+            mapped_physical
+        );
+
+        serial_write(
+            "\n[diag] code flags: 0x"
+        );
+
+        serial_write_hex32(
+            mapped_flags
+        );
+
+        serial_write(
+            "\n"
+        );
+
+        serial_write(
+            "[diag] code bytes: "
+        );
+
+        {
+            const uint8_t *code_ptr =
+                (const uint8_t *)(uintptr_t)code_page;
+
+            for (uint32_t i = 0; i < 16U; ++i) {
+                static const char hex[] =
+                    "0123456789ABCDEF";
+
+                char out[3];
+
+                out[0] =
+                    hex[(code_ptr[i] >> 4) & 0x0FU];
+
+                out[1] =
+                    hex[code_ptr[i] & 0x0FU];
+
+                out[2] =
+                    '\0';
+
+                serial_write(out);
+
+                if (i != 15U)
+                    serial_write(" ");
+            }
+        }
+
+        serial_write(
+            "\n"
+        );
+    }
+
     serial_write(
         "[ ok ] created Ring 3 task "
     );
