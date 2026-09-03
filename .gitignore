@@ -3,4 +3,6 @@
 *.iso
 iso/
 firstpatch.py
-all_diffs.txt*.bak
+all_diffs.txt
+*.bak
+*.bak.*
